@@ -161,3 +161,95 @@ socket.on("connect", () => {
     });
   }
 });
+
+// ===== NIGHT 30s COUNTDOWN =====
+let nightTimerInterval = null;
+let lastNightSecond = null;
+
+function nightBeep() {
+  try {
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    if (!AudioCtx) return;
+
+    const ctx = new AudioCtx();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+
+    osc.frequency.value = 880;
+    gain.gain.value = 0.15;
+
+    osc.start();
+    osc.stop(ctx.currentTime + 0.12);
+  } catch(e) {}
+}
+
+function startNightCountdown() {
+  clearInterval(nightTimerInterval);
+  lastNightSecond = null;
+
+  function updateNightTimer() {
+    if (!state || state.phase !== "night" || !state.nightEndsAt) {
+      clearInterval(nightTimerInterval);
+      return;
+    }
+
+    const seconds = Math.max(
+      0,
+      Math.ceil((state.nightEndsAt - Date.now()) / 1000)
+    );
+
+    let timer = document.getElementById("nightTimer");
+
+    if (!timer) {
+      timer = document.createElement("div");
+      timer.id = "nightTimer";
+      timer.style.cssText =
+        "font-size:42px;font-weight:800;text-align:center;" +
+        "margin:15px 0;padding:12px;border-radius:16px;";
+      
+      const msg = document.getElementById("gameMsg");
+      if (msg) msg.before(timer);
+    }
+
+    timer.textContent = "⏱️ " + seconds + " วินาที";
+
+    if (seconds <= 10) {
+      timer.style.color = "#ff3b30";
+      timer.style.fontSize = "52px";
+
+      if (seconds > 0 && seconds !== lastNightSecond) {
+        nightBeep();
+
+        if (navigator.vibrate) {
+          navigator.vibrate(180);
+        }
+      }
+    } else {
+      timer.style.color = "";
+      timer.style.fontSize = "42px";
+    }
+
+    lastNightSecond = seconds;
+
+    if (seconds <= 0) {
+      clearInterval(nightTimerInterval);
+      timer.textContent = "⏰ หมดเวลา";
+    }
+  }
+
+  updateNightTimer();
+  nightTimerInterval = setInterval(updateNightTimer, 200);
+}
+
+socket.on("state", s => {
+  if (s.phase === "night" && s.nightEndsAt) {
+    setTimeout(startNightCountdown, 0);
+  } else {
+    clearInterval(nightTimerInterval);
+    const timer = document.getElementById("nightTimer");
+    if (timer) timer.remove();
+  }
+});

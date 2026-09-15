@@ -62,7 +62,7 @@ function sendState(room) {
     };
     io.to(p.id).emit("state", {
       room: room.code, hostId: room.hostId, started: room.started,
-      phase: room.phase, night: room.night, players: publicPlayers(room),
+      phase: room.phase, night: room.night, nightEndsAt: room.nightEndsAt || null, players: publicPlayers(room),
       me, lovers: room.lovers.includes(p.id) ? room.lovers : [],
       winner: room.winner,
       message: room.message || ""
@@ -165,9 +165,31 @@ function startNight(room) {
   room.phase = "night";
   room.actions = {};
   room.votes = {};
+
+  // กลางคืนมีเวลา 30 วินาที
+  room.nightEndsAt = Date.now() + 30000;
+  const thisNight = room.night;
+
   room.message = `🌙 คืนที่ ${room.night} — ผู้มีพลัง กรุณาเลือกการกระทำของคุณ`;
+
   sendState(room);
-  broadcast(room, "phase", { phase: "night", night: room.night, message: room.message });
+
+  broadcast(room, "phase", {
+    phase: "night",
+    night: room.night,
+    message: room.message,
+    endsAt: room.nightEndsAt
+  });
+
+  // ครบ 30 วินาที จบกลางคืนอัตโนมัติ
+  setTimeout(() => {
+    if (
+      room.phase === "night" &&
+      room.night === thisNight
+    ) {
+      resolveNight(room);
+    }
+  }, 30000);
 }
 
 function availableActions(room, p) {
