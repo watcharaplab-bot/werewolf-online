@@ -321,6 +321,7 @@ io.on("connection", socket => {
     if (!name) return cb({ error: "กรุณาใส่ชื่อผู้เล่น" });
     let code; do { code = rid(); } while (rooms.has(code));
     const room = newRoom(code, socket.id);
+    rooms.set(code, room);
     room.players.set(socket.id, { id: socket.id, name, alive: true });
     socket.join(code);
     cb({ ok: true, code });
