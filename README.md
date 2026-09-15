@@ -23,15 +23,17 @@ npm install
 npm start
 ```
 
-เปิด:
-http://localhost:3000
+บน Replit ให้กด Run แล้วเปิดแอปจาก Preview
+
+หากรันในเครื่อง ให้เปิด:
+http://localhost:5000
 
 ## เล่นหลายเครื่องใน LAN
 
 ให้เครื่องที่รัน Server หา IP เช่น `192.168.1.20`
 
 เครื่องอื่นเปิด:
-`http://192.168.1.20:3000`
+`http://192.168.1.20:5000`
 
 ถ้าจะให้เล่นผ่าน Internet ต้องนำ Server ไป deploy บน VPS / Render / Railway / Fly.io / Cloud VM และเปิด WebSocket/Socket.IO
 
