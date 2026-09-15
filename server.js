@@ -331,12 +331,54 @@ io.on("connection", socket => {
   socket.on("joinRoom", ({ code, name }, cb) => {
     code = String(code || "").trim().toUpperCase();
     name = String(name || "").trim().slice(0, 24);
+
     const room = rooms.get(code);
     if (!room) return cb({ error: "ไม่พบห้องนี้" });
-    if (room.started) return cb({ error: "เกมเริ่มแล้ว ไม่สามารถเข้าร่วมรอบนี้ได้" });
-    if (room.players.size >= MAX_PLAYERS) return cb({ error: "ห้องเต็มแล้ว (สูงสุด 15 คน)" });
     if (!name) return cb({ error: "กรุณาใส่ชื่อผู้เล่น" });
-    room.players.set(socket.id, { id: socket.id, name, alive: true });
+
+    // หา Player ชื่อเดิมที่หลุดและกำลังรอ reconnect
+    const oldEntry = [...room.players.entries()].find(
+      ([id, p]) => p.name.toLowerCase() === name.toLowerCase()
+    );
+
+    if (oldEntry) {
+      const [oldId, oldPlayer] = oldEntry;
+
+      // ถ้า socket เดิมยัง online อยู่ ไม่ให้ชื่อซ้ำ
+      if (oldId !== socket.id && io.sockets.sockets.has(oldId)) {
+        return cb({ error: "ชื่อผู้เล่นนี้มีอยู่ในห้องแล้ว" });
+      }
+
+      // ย้ายข้อมูล Player เดิมมายัง Socket ใหม่
+      room.players.delete(oldId);
+
+      oldPlayer.id = socket.id;
+      room.players.set(socket.id, oldPlayer);
+
+      // ถ้าคนที่กลับมาเป็น HOST ให้คืน HOST
+      if (room.hostId === oldId) {
+        room.hostId = socket.id;
+      }
+
+      socket.join(code);
+      cb({ ok: true, code, reconnected: true });
+      sendState(room);
+      return;
+    }
+
+    // คนใหม่เข้าไม่ได้หลังเกมเริ่ม
+    if (room.started)
+      return cb({ error: "เกมเริ่มแล้ว ไม่สามารถเข้าร่วมรอบนี้ได้" });
+
+    if (room.players.size >= MAX_PLAYERS)
+      return cb({ error: "ห้องเต็มแล้ว" });
+
+    room.players.set(socket.id, {
+      id: socket.id,
+      name,
+      alive: true
+    });
+
     socket.join(code);
     cb({ ok: true, code });
     sendState(room);
@@ -487,13 +529,29 @@ io.on("connection", socket => {
   socket.on("disconnect", () => {
     for (const [code, room] of rooms) {
       if (!room.players.has(socket.id)) continue;
-      room.players.delete(socket.id);
-      if (room.hostId === socket.id) {
-        const next = room.players.values().next().value;
-        if (next) room.hostId = next.id;
-      }
-      if (room.players.size === 0) { setTimeout(() => { const r = rooms.get(code); if (r && r.players.size === 0) rooms.delete(code); }, 300000); }
-      else sendState(room);
+
+      const oldSocketId = socket.id;
+
+      setTimeout(() => {
+        const r = rooms.get(code);
+        if (!r) return;
+
+        // ถ้ายังเป็นผู้เล่นคนเดิมและยังไม่ได้ reconnect ให้ลบหลัง 3 นาที
+        if (r.players.has(oldSocketId)) {
+          r.players.delete(oldSocketId);
+
+          if (r.hostId === oldSocketId) {
+            const next = r.players.values().next().value;
+            if (next) r.hostId = next.id;
+          }
+
+          if (r.players.size === 0) {
+            rooms.delete(code);
+          } else {
+            sendState(r);
+          }
+        }
+      }, 180000);
     }
   });
 });
