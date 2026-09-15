@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Werewolf Online</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <div id="app">
+    <section id="home" class="screen">
+      <div class="hero">
+        <div class="logo">🐺</div>
+        <h1>WEREWOLF <span>ONLINE</span></h1>
+        <p>Online Multiplayer • สูงสุด 15 คน</p>
+        <div class="card login">
+          <input id="name" maxlength="24" placeholder="ชื่อผู้เล่น">
+          <div class="row">
+            <button id="createBtn" class="primary">สร้างห้อง</button>
+            <input id="roomCode" maxlength="6" placeholder="ROOM CODE">
+            <button id="joinBtn">เข้าร่วมห้อง</button>
+          </div>
+          <div id="homeMsg" class="msg"></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="lobby" class="screen hidden">
+      <header><div><b>ROOM</b> <strong id="room"></strong></div><button id="copyBtn">คัดลอก Code</button></header>
+      <main class="grid">
+        <div class="card">
+          <h2>ผู้เล่น <span id="playerCount"></span>/15</h2>
+          <div id="players"></div>
+        </div>
+        <div id="hostPanel" class="card hidden">
+          <h2>👑 เลือก Role</h2>
+          <p class="muted">จำนวน Role ต้องเท่ากับจำนวนผู้เล่น และเลือกซ้ำได้</p>
+          <div id="roles"></div>
+          <div class="total">เลือกแล้ว <b id="roleTotal">0</b> / <span id="roleNeed">0</span></div>
+          <button id="startBtn" class="primary full">🎮 START GAME</button>
+          <div id="hostMsg" class="msg"></div>
+        </div>
+        <div id="waitPanel" class="card">
+          <h2>รอ HOST</h2>
+          <p>แชร์ Room Code ให้เพื่อนเข้าร่วม</p>
+          <div class="bigcode" id="bigCode"></div>
+        </div>
+      </main>
+    </section>
+
+    <section id="game" class="screen hidden">
+      <header>
+        <div><b id="phaseTitle">NIGHT</b> <span id="nightNo"></span></div>
+        <button id="newRoundBtn" class="hidden">🔄 เล่นรอบใหม่</button>
+      </header>
+      <main class="gamegrid">
+        <div class="card me">
+          <div id="myRole"></div>
+          <div id="private"></div>
+        </div>
+        <div class="card">
+          <h2>ผู้เล่น</h2>
+          <div id="gamePlayers"></div>
+        </div>
+        <div class="card actionCard">
+          <h2 id="actionTitle">Action</h2>
+          <div id="actions"></div>
+          <div id="gameMsg" class="msg"></div>
+        </div>
+      </main>
+    </section>
+  </div>
+<script src="/socket.io/socket.io.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>

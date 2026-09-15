@@ -1,0 +1,14 @@
+{
+  "name": "werewolf-online-multiplayer",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Online multiplayer Werewolf game for up to 15 players.",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "dependencies": {
+    "express": "^5.1.0",
+    "socket.io": "^4.8.1"
+  }
+}
