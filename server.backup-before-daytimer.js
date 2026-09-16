@@ -9,15 +9,7 @@ const server = http.createServer(app);
 const io = new Server(server);
 
 const PORT = process.env.PORT || 5000;
-app.use(express.static(path.join(__dirname, "public"), {
-  etag: false,
-  maxAge: 0,
-  setHeaders: (res) => {
-    res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
-    res.setHeader("Pragma", "no-cache");
-    res.setHeader("Expires", "0");
-  }
-}));
+app.use(express.static(path.join(__dirname, "public")));
 
 const rooms = new Map();
 const MAX_PLAYERS = 15;
@@ -61,62 +53,6 @@ function publicPlayers(room) {
   }));
 }
 
-function getVoteSummary(room) {
-  const tally = {};
-
-  for (const targetId of Object.values(room.votes || {})) {
-    const target = room.players.get(targetId);
-    if (target && target.alive) {
-      tally[targetId] = (tally[targetId] || 0) + 1;
-    }
-  }
-
-  const alivePlayers = [...room.players.values()].filter(p => p.alive);
-
-  return {
-    tally,
-    votedCount: Object.keys(room.votes || {}).length,
-    voterCount: alivePlayers.length
-  };
-}
-
-function getWolfTeamFor(room, viewer) {
-  // ผู้เล่นปกติที่เป็นฝ่ายหมาป่า
-  const viewerIsWolf = isWolf(viewer.role);
-
-  // Drunk ที่ได้บทจริงเป็นหมาป่า จะรู้ตัวตั้งแต่คืนที่ 2
-  const viewerIsDrunkWolf =
-    viewer.role === "Drunk" &&
-    isWolf(viewer.trueRole) &&
-    room.night >= 2;
-
-  // คนที่ไม่ใช่ฝ่ายหมาป่า จะไม่ได้รับรายชื่อ
-  if (!viewerIsWolf && !viewerIsDrunkWolf) return [];
-
-  return [...room.players.values()]
-    .filter(player => {
-      // หมาป่าปกติ เห็นได้ทันที
-      if (isWolf(player.role)) return true;
-
-      // Drunk ที่ได้บทหมาป่า ซ่อนในคืนแรก
-      // และเปิดเผยต่อทีมตั้งแต่คืนที่ 2
-      if (
-        player.role === "Drunk" &&
-        isWolf(player.trueRole) &&
-        room.night >= 2
-      ) {
-        return true;
-      }
-
-      return false;
-    })
-    .map(player => ({
-      id: player.id,
-      name: player.name,
-      alive: player.alive
-    }));
-}
-
 function sendState(room) {
   for (const p of room.players.values()) {
     const me = {
@@ -127,27 +63,9 @@ function sendState(room) {
     io.to(p.id).emit("state", {
       room: room.code, hostId: room.hostId, started: room.started,
       phase: room.phase, night: room.night, nightEndsAt: room.nightEndsAt || null, dayEndsAt: room.dayEndsAt || null, players: publicPlayers(room),
-        me,
-        lastGuardTarget: p.role === "Bodyguard" ? (room.lastGuardTarget || null) : null,
-          huntressUsed: p.role === "Huntress" ? room.huntressUsed.has(p.id) : false,
-        wolfTeam: getWolfTeamFor(room, p),
-        lovers: room.lovers.includes(p.id) ? room.lovers : [],
-      winner: room.winner, pendingHunter: room.pendingHunter || null,
-      memorialDeaths: room.memorialDeaths || [], memorialEndsAt: room.memorialEndsAt || null,
-      message: room.message || "",
-        voteSummary: room.phase === "day" ? getVoteSummary(room) : null,
-        wolfVoteSummary:
-          room.phase === "night" &&
-          (
-            isWolf(p.role) ||
-            (
-              p.role === "Drunk" &&
-              isWolf(p.trueRole) &&
-              room.night >= 2
-            )
-          )
-            ? getWolfVoteSummary(room)
-            : null
+      me, lovers: room.lovers.includes(p.id) ? room.lovers : [],
+      winner: room.winner,
+      message: room.message || ""
     });
   }
 }
@@ -181,17 +99,11 @@ function checkWinner(room) {
   return !!room.winner;
 }
 
-function startMemorial(room, deadIds) {
-  room.memorialDeaths = deadIds.map(id => room.players.get(id)?.name).filter(Boolean);
-  room.memorialEndsAt = Date.now() + 20000;
-}
 function kill(room, id, reason = "") {
   const p = room.players.get(id);
-  console.log("LOVE DEBUG:", {killedId:id, lovers:room.lovers, players:[...room.players.values()].map(p=>({id:p.id,name:p.name,alive:p.alive}))});
   if (!p || !p.alive) return [];
   p.alive = false;
   p.deathReason = reason;
-  if (p.role === "Hunter") room.pendingHunter = id;
   const killed = [id];
 
   // Lover death chain
@@ -203,7 +115,6 @@ function kill(room, id, reason = "") {
       lp.alive = false;
       lp.deathReason = "Lover";
       killed.push(lover);
-    if (lp.role === "Hunter") room.pendingHunter = lover;
     }
   }
 
@@ -255,9 +166,9 @@ function startNight(room) {
   room.actions = {};
   room.votes = {};
 
-  // ไม่มีเวลาจำกัดในช่วงกลางคืน
-  room.nightEndsAt = null;
-  room.nightDeathStart = room.deaths.length;
+  // กลางคืนมีเวลา 30 วินาที
+  room.nightEndsAt = Date.now() + 30000;
+  const thisNight = room.night;
 
   room.message = `🌙 คืนที่ ${room.night} — ผู้มีพลัง กรุณาเลือกการกระทำของคุณ`;
 
@@ -266,8 +177,19 @@ function startNight(room) {
   broadcast(room, "phase", {
     phase: "night",
     night: room.night,
-    message: room.message
+    message: room.message,
+    endsAt: room.nightEndsAt
   });
+
+  // ครบ 30 วินาที จบกลางคืนอัตโนมัติ
+  setTimeout(() => {
+    if (
+      room.phase === "night" &&
+      room.night === thisNight
+    ) {
+      resolveNight(room);
+    }
+  }, 30000);
 }
 
 function availableActions(room, p) {
@@ -277,14 +199,7 @@ function availableActions(room, p) {
   if (p.role === "Seer") actions.push("seer");
   if (p.role === "Bodyguard") actions.push("guard");
   if (p.role === "Cupid" && room.night === 1) actions.push("cupid");
-    if (
-      isWolf(p.role) ||
-      (
-        p.role === "Drunk" &&
-        isWolf(p.trueRole) &&
-        room.night >= 2
-      )
-    ) actions.push("wolf");
+  if (p.role === "Werewolf" || p.role === "WolfCub" || p.role === "DireWolf") actions.push("wolf");
   if (p.role === "Huntress" && !room.huntressUsed.has(p.id)) actions.push("huntress");
   if (p.role === "DireWolf" && room.night === 1) actions.push("companion");
   return actions;
@@ -317,38 +232,37 @@ function resolveNight(room) {
   const guard = [...room.players.values()].find(p => p.alive && p.role === "Bodyguard");
   if (guard && room.actions[guard.id]?.type === "guard") {
     const target = aliveById(room, room.actions[guard.id].target);
-    if (target && target.id !== room.lastGuardTarget) {
+    if (target && target.id !== guard.id && target.id !== room.lastGuardTarget) {
       guardTarget = target.id;
       room.lastGuardTarget = target.id;
     }
   }
 
-  // Werewolf target(s) - ต้องเลือกเหยื่อตรงกันทั้งทีม
-  const wolfSummary = getWolfVoteSummary(room);
-  let wolfTargets = [];
-
+  // Werewolf target(s)
+  const wolves = [...room.players.values()].filter(p => p.alive && isWolf(p.role));
+  const wolfVotes = {};
+  for (const w of wolves) {
+    const a = room.actions[w.id];
+    if (a?.type === "wolf") {
+      const t = aliveById(room, a.target);
+      if (t && !isWolf(t.role)) wolfVotes[t.id] = (wolfVotes[t.id] || 0) + 1;
+    }
+  }
+  let wolfTargets = Object.entries(wolfVotes).sort((a,b) => b[1]-a[1]).map(x => x[0]);
   if (room.diseasedBlocked) {
     notes.push("🦠 คืนนี้หมาป่าไม่สามารถสังหารได้ เพราะฤทธิ์ของผู้ติดโรค");
+    wolfTargets = [];
     room.diseasedBlocked = false;
-
-  } else if (wolfSummary.unanimous && wolfSummary.targetId) {
-
-    // ปกติฆ่าเป้าหมายที่ทีมตกลงตรงกัน
-    wolfTargets = [wolfSummary.targetId];
-
-    // WolfCub bonus เก็บไว้ก่อน
-    // ระบบ 2 kills จะจัดการแยกภายหลัง
-    if (room.wolfCubBonus) {
-      room.wolfCubBonus = false;
-    }
+  } else if (room.wolfCubBonus) {
+    wolfTargets = wolfTargets.slice(0, 2);
+    room.wolfCubBonus = false;
+  } else {
+    wolfTargets = wolfTargets.slice(0, 1);
   }
 
   for (const target of wolfTargets) {
-    if (target !== guardTarget) {
-      kills.add(target);
-    } else {
-      notes.push("🛡️ ผู้คุ้มกันช่วยปกป้องเหยื่อไว้ได้");
-    }
+    if (target !== guardTarget) kills.add(target);
+    else notes.push("🛡️ ผู้คุ้มกันช่วยปกป้องเหยื่อไว้ได้");
   }
 
   // Huntress
@@ -398,27 +312,13 @@ function resolveNight(room) {
     if (drunk) drunk.role = drunk.trueRole;
   }
 
-  const nightDead = room.deaths.slice(room.nightDeathStart || 0);
-  const nextAfterMemorial = room.pendingHunter ? "hunter" : (checkWinner(room) ? "gameover" : "day");
-  if (nightDead.length > 0) {
-    room.afterMemorialPhase = nextAfterMemorial;
-    startMemorial(room, nightDead);
-    room.phase = "memorial";
-    room.message = "🕯️ ขอร่วมไว้อาลัยแด่ผู้จากไป";
-    sendState(room);
-    return;
-  }
-  if (!room.pendingHunter && checkWinner(room)) {
+  if (checkWinner(room)) {
     room.phase = "gameover";
     room.message = notes.join("\n") || "🌙 จบคืน";
-  } else if (room.pendingHunter) {
-    room.phase = "hunter";
-    room.message = "🏹 นายพรานเสียชีวิต - เลือกคนที่จะยิง";
-  } else if (!room.pendingHunter) {
+  } else {
     room.phase = "day";
     room.votes = {};
-    room.dayEndsAt = null;
-
+    room.dayEndsAt = Date.now() + 180000;
     room.message = notes.join("\n") || "☀️ เช้าวันใหม่ — โปรดพูดคุยและโหวต";
   }
   sendState(room);
@@ -428,100 +328,9 @@ function resolveNight(room) {
   });
 }
 
-function afterNightMemorial(room) {
-  const next = room.afterMemorialPhase || "day";
-
-  room.memorialDeaths = [];
-  room.memorialEndsAt = null;
-  room.afterMemorialPhase = null;
-
-  if (next === "hunter") {
-    room.phase = "hunter";
-    room.message = "🏹 นายพรานเสียชีวิต - เลือกคนที่จะยิง";
-    sendState(room);
-    return;
-  }
-
-  if (next === "gameover") {
-    room.phase = "gameover";
-    sendState(room);
-    return;
-  }
-
-  room.phase = "day";
-  room.votes = {};
-  room.dayEndsAt = null;
-  room.message = "☀️ เช้าวันใหม่ — โปรดพูดคุยและโหวต";
-
-
-  sendState(room);
-}
-
-function getWolfVoteSummary(room) {
-  // สมาชิกทีมหมาป่าที่ต้องร่วมเลือกเหยื่อในคืนนี้
-  const wolves = [...room.players.values()].filter(p =>
-    p.alive &&
-    (
-      isWolf(p.role) ||
-      (
-        p.role === "Drunk" &&
-        isWolf(p.trueRole) &&
-        room.night >= 2
-      )
-    )
-  );
-
-  const choices = wolves.map(w => {
-    const action = room.actions[w.id];
-    const target = action?.type === "wolf"
-      ? room.players.get(action.target)
-      : null;
-
-    return {
-      id: w.id,
-      name: w.name,
-      targetId: target?.id || null,
-      targetName: target?.name || null
-    };
-  });
-
-  const selected = choices.filter(x => x.targetId);
-
-  // ต้องเลือกครบทุกตัว และเป้าหมายต้องเป็นคนเดียวกัน
-  const unanimous =
-    wolves.length > 0 &&
-    selected.length === wolves.length &&
-    new Set(selected.map(x => x.targetId)).size === 1;
-
-  return {
-    choices,
-    selectedCount: selected.length,
-    wolfCount: wolves.length,
-    unanimous,
-    targetId: unanimous ? selected[0].targetId : null,
-    targetName: unanimous ? selected[0].targetName : null
-  };
-}
-
 function allNightActionsDone(room) {
-  const needed = [...room.players.values()].filter(
-    p => p.alive && availableActions(room, p).length
-  );
-
-  // ทุกคนที่มี Action ต้องทำ Action ก่อน
-  if (!needed.every(p => room.actions[p.id])) {
-    return false;
-  }
-
-  // ถ้ามีหมาป่ามากกว่า 1 ตัว
-  // หมาป่าทุกตัวต้องเลือกเหยื่อคนเดียวกัน
-  const wolfSummary = getWolfVoteSummary(room);
-
-  if (wolfSummary.wolfCount > 0 && !wolfSummary.unanimous) {
-    return false;
-  }
-
-  return true;
+  const needed = [...room.players.values()].filter(p => p.alive && availableActions(room, p).length);
+  return needed.every(p => room.actions[p.id]);
 }
 
 io.on("connection", socket => {
@@ -649,23 +458,8 @@ io.on("connection", socket => {
       if (!aliveById(room,a) || !aliveById(room,b)) return cb({ error: "เป้าหมายไม่ถูกต้อง" });
     } else if (type === "companion" || type === "wolf" || type === "seer" || type === "guard" || type === "huntress") {
       const t = aliveById(room, target);
-      if (!t) return cb({ error: "เป้าหมายไม่ถูกต้อง" });
-
-      // Guard สามารถป้องกันตัวเองได้
-      // Action อื่นยังคงห้ามเลือกตัวเอง
-      if (type !== "guard" && t.id === p.id)
-        return cb({ error: "เป้าหมายไม่ถูกต้อง" });
-      if (
-        type === "wolf" &&
-        (
-          isWolf(t.role) ||
-          (
-            t.role === "Drunk" &&
-            isWolf(t.trueRole) &&
-            room.night >= 2
-          )
-        )
-      ) return cb({ error: "หมาป่าเลือกฆ่าสมาชิกทีมหมาป่าด้วยกันไม่ได้" });
+      if (!t || t.id === p.id) return cb({ error: "เป้าหมายไม่ถูกต้อง" });
+      if (type === "wolf" && isWolf(t.role)) return cb({ error: "หมาป่าเลือกฆ่าหมาป่าด้วยกันไม่ได้" });
       if (type === "guard" && target === room.lastGuardTarget) return cb({ error: "ห้ามป้องกันคนเดิมติดต่อกัน" });
     }
 
@@ -674,18 +468,8 @@ io.on("connection", socket => {
     if (type === "seer") {
       const t = room.players.get(target);
       let seen = t?.role;
-
-      // คนเมา: คืนแรก Seer ยังไม่เห็นบทจริง
-      // ตั้งแต่คืนที่ 2 จึงตรวจตาม trueRole
-      if (t?.role === "Drunk") {
-        seen = room.night >= 2 ? t.trueRole : "Drunk";
-      }
-
-      socket.emit("privateResult", {
-        type: "seer",
-        target: t.name,
-        isWolf: isWolf(seen)
-      });
+      if (t?.role === "Drunk") seen = t.trueRole;
+      socket.emit("privateResult", { type: "seer", target: t.name, role: seen, isWolf: isWolf(seen) });
     }
 
     if (type === "huntress") {
@@ -698,36 +482,25 @@ io.on("connection", socket => {
     else sendState(room);
   });
 
-  
-function finishDayVote(room) {
-  // ป้องกันการสรุปซ้ำ
-  if (!room || room.phase !== "day") return;
+  socket.on("vote", ({ target }, cb) => {
+    const room = [...rooms.values()].find(r => r.players.has(socket.id));
+    const p = room?.players.get(socket.id);
+    if (!room || !p) return cb({ error: "ไม่พบผู้เล่น" });
+    if (room.phase !== "day" || !p.alive) return cb({ error: "ตอนนี้ไม่สามารถโหวตได้" });
+    const t = aliveById(room, target);
+    if (!t || t.id === p.id) return cb({ error: "โหวตเป้าหมายไม่ถูกต้อง" });
 
-  const tally = {};
+    room.votes[p.id] = target;
+    cb({ ok: true });
 
-  // นับเฉพาะ Vote ที่มีอยู่
-  for (const targetId of Object.values(room.votes || {})) {
-    const target = aliveById(room, targetId);
-    if (target) {
-      tally[targetId] = (tally[targetId] || 0) + 1;
-    }
-  }
-
-  const scores = Object.values(tally);
-
-  // มีคนโหวตอย่างน้อย 1 คน
-  if (scores.length > 0) {
-    const max = Math.max(...scores);
-
-    const winners = Object.entries(tally)
-      .filter(([, n]) => n === max)
-      .map(([id]) => id);
-
-    // ประหารเฉพาะกรณีคะแนนสูงสุดมีคนเดียว
-    if (winners.length === 1) {
-      const out = room.players.get(winners[0]);
-
-      if (out && out.alive) {
+    const voters = [...room.players.values()].filter(alive);
+    if (voters.every(v => room.votes[v.id])) {
+      const tally = {};
+      for (const targetId of Object.values(room.votes)) tally[targetId] = (tally[targetId] || 0) + 1;
+      const max = Math.max(...Object.values(tally));
+      const winners = Object.entries(tally).filter(([,n])=>n===max).map(([id])=>id);
+      if (winners.length === 1) {
+        const out = room.players.get(winners[0]);
         if (out.role === "Tanner") {
           out.tannerWon = true;
           room.winner = "Tanner";
@@ -735,123 +508,41 @@ function finishDayVote(room) {
           const before = out.role;
           const ds = kill(room, out.id, "Vote");
           room.deaths.push(...ds);
-
           if (before === "WolfCub") room.wolfCubBonus = true;
-        for (const deadId of ds) { const deadPlayer = room.players.get(deadId); if (deadPlayer?.role === "Hunter") room.pendingHunter = deadId; if (deadPlayer?.role === "WolfCub") room.wolfCubBonus = true; }
+          if (before === "Hunter") room.pendingHunter = out.id;
         }
       }
+      room.votes = {};
+      if (!room.winner && room.pendingHunter) {
+        room.phase = "hunter";
+        room.message = "🏹 นายพรานเสียชีวิต — เลือกคนที่จะยิง";
+      } else if (checkWinner(room)) {
+        room.phase = "gameover";
+      } else {
+        startNight(room);
+        return;
+      }
+      sendState(room);
+    } else {
+      sendState(room);
     }
-  }
+  });
 
-  room.votes = {};
-  room.dayEndsAt = null;
-
-  if (!room.winner && room.pendingHunter) {
-    console.log("HUNTER SERVER DEBUG", {
-      pendingHunter: room.pendingHunter,
-      phase: room.phase,
-      players: [...room.players.values()].map(p => ({
-        id:p.id, name:p.name, role:p.role, alive:p.alive
-      }))
-    });
-    room.phase = "hunter";
-    room.message = "🏹 นายพรานเสียชีวิต – เลือกคนที่จะยิง";
+  socket.on("hunterShot", ({ target }, cb) => {
+    const room = [...rooms.values()].find(r => r.players.has(socket.id));
+    if (!room || room.phase !== "hunter" || room.pendingHunter !== socket.id) return cb({ error: "ไม่มีสิทธิ์" });
+    const t = aliveById(room, target);
+    if (!t || t.id === socket.id) return cb({ error: "เป้าหมายไม่ถูกต้อง" });
+    const ds = kill(room, t.id, "Hunter");
+    room.deaths.push(...ds);
+    room.pendingHunter = null;
+    if (checkWinner(room)) room.phase = "gameover";
+    else startNight(room);
+    cb({ ok: true });
     sendState(room);
-  } else if (checkWinner(room)) {
-    room.phase = "gameover";
-    sendState(room);
-  } else {
-    startNight(room);
-  }
-}
+  });
 
-socket.on("vote", ({ target }, cb) => {
-  const room = [...rooms.values()].find(r => r.players.has(socket.id));
-  const p = room?.players.get(socket.id);
-
-  if (!room || !p)
-    return cb({ error: "ไม่พบผู้เล่น" });
-
-  console.log("VOTE DEBUG:", {name:p.name, alive:p.alive, phase:room.phase, socket:socket.id});
-  if (room.phase !== "day" || !p.alive)
-    return cb({ error: "ตอนนี้ไม่สามารถโหวตได้" });
-
-  // หมดเวลาแล้ว ไม่รับ Vote เพิ่ม
-  if (room.dayEndsAt && Date.now() >= room.dayEndsAt)
-    return cb({ error: "หมดเวลาโหวตแล้ว" });
-
-  const t = aliveById(room, target);
-
-  if (!t || t.id === p.id)
-    return cb({ error: "โหวตเป้าหมายไม่ถูกต้อง" });
-
-  // ผู้เล่นสามารถเปลี่ยน Vote ได้จนกว่าทุกคนจะ Vote ครบ
-  room.votes[p.id] = target;
-
-  cb({ ok: true });
-    // ส่งผลโหวตล่าสุดให้ผู้เล่นทุกคนทันที
-    sendState(room);
-
-  const voters = [...room.players.values()].filter(alive);
-
-  // ทุกคน Vote ครบ → สรุปทันที
-  if (voters.every(v => room.votes[v.id])) {
-    finishDayVote(room);
-    return;
-  }
-
-  sendState(room);
-});
-
-socket.on("hunterShot", ({ target }, cb) => {
-  const room = [...rooms.values()].find(r => r.players.has(socket.id));
-
-  if (!room || room.phase !== "hunter" || room.pendingHunter !== socket.id)
-    return cb({ error: "ไม่มีสิทธิ์" });
-
-  const t = aliveById(room, target);
-  if (!t || t.id === socket.id)
-    return cb({ error: "เป้าหมายไม่ถูกต้อง" });
-
-  const ds = kill(room, t.id, "Hunter");
-  room.deaths.push(...ds);
-  room.pendingHunter = null;
-
-  cb({ ok: true });
-
-  if (checkWinner(room)) {
-    room.phase = "gameover";
-    room.dayEndsAt = null;
-    sendState(room);
-    return;
-  }
-
-  room.phase = "day";
-  room.votes = {};
-  room.dayEndsAt = null;
-  room.message = "☀️ นายพรานยิงแล้ว — เข้าสู่ช่วงพูดคุยและโหวต";
-
-
-  sendState(room);
-});
-
-socket.on("continueMemorial", cb => {
-  const room = [...rooms.values()].find(r => r.players.has(socket.id));
-
-  if (!room)
-    return cb({ error: "ไม่พบห้อง" });
-
-  if (room.hostId !== socket.id)
-    return cb({ error: "เฉพาะ HOST เท่านั้น" });
-
-  if (room.phase !== "memorial")
-    return cb({ error: "ตอนนี้ไม่ได้อยู่ในช่วงไว้อาลัย" });
-
-  cb({ ok: true });
-  afterNightMemorial(room);
-});
-
-socket.on("newRound", cb => {
+  socket.on("newRound", cb => {
     const room = [...rooms.values()].find(r => r.players.has(socket.id));
     if (!room || room.hostId !== socket.id) return cb({ error: "เฉพาะ HOST เท่านั้น" });
     resetRound(room);

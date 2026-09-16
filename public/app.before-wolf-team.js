@@ -66,32 +66,7 @@ function renderGame(){
   $("phaseTitle").textContent=state.phase==="night"?"🌙 NIGHT":state.phase==="day"?"☀️ DAY":state.phase==="hunter"?"🏹 HUNTER":"🏆 GAME OVER";
   $("nightNo").textContent=state.night?` ${state.night}`:"";
   $("newRoundBtn").classList.toggle("hidden",state.hostId!==me.id || state.phase!=="gameover");
-    const wolfTeam = state.wolfTeam || [];
-    const wolfTeamHtml = wolfTeam.length
-      ? `<div class="wolf-team-box">
-          <div class="wolf-team-title">🐺 ทีมหมาป่า</div>
-          <div class="wolf-team-list">
-            ${wolfTeam.map(w=>`
-              <div class="wolf-team-member ${w.id===me.id?'is-me':''} ${w.alive?'':'is-dead'}">
-                <span>🐺 ${w.name}</span>
-                <span>${w.id===me.id?'คุณ':(w.alive?'🟢':'💀')}</span>
-              </div>
-            `).join("")}
-          </div>
-          <div class="wolf-team-note">ไม่เปิดเผยว่าใครเป็นหมาป่าประเภทใด</div>
-        </div>`
-      : "";
-
-    $("myRole").innerHTML=`
-      <div class="myrole">
-        <div class="roleEmoji">${me.emoji||"❓"}</div>
-        <div class="roleTitle">${roles[me.role]?.[1]||me.role}</div>
-        <div class="faction">${me.faction}</div>
-        ${me.role==="Drunk"&&state.night<2
-          ? '<div class="notice">🍺 คุณยังไม่รู้บทที่แท้จริงจนกว่าจะถึงคืนที่ 2</div>'
-          : ''}
-        ${wolfTeamHtml}
-      </div>`;
+  $("myRole").innerHTML=`<div class="myrole"><div class="roleEmoji">${me.emoji||"❓"}</div><div class="roleTitle">${roles[me.role]?.[1]||me.role}</div><div class="faction">${me.faction}</div>${me.role==="Drunk"&&state.night<2?'<div class="notice">🍺 คุณยังไม่รู้บทที่แท้จริงจนกว่าจะถึงคืนที่ 2</div>':''}</div>`;
   const voteSummary = state.voteSummary;
   $("gamePlayers").innerHTML=state.players.map(p=>{
     const votes = voteSummary?.tally?.[p.id] || 0;
@@ -132,54 +107,8 @@ function buttonsForPlayers(cb){
   $("actions").innerHTML=candidates().map(p=>`<button class="target" onclick="${cb}('${p.id}')">${p.name}</button>`).join("");
 }
 
-function renderWolfVoteStatus() {
-  const summary = state.wolfVoteSummary;
-  if (!summary || !summary.wolfCount) return "";
-
-  const rows = summary.choices.map(w => `
-    <div class="wolf-vote-row">
-      <span class="wolf-voter">🐺 ${w.name}</span>
-      <span class="wolf-arrow">➜</span>
-      <span class="${w.targetName ? 'wolf-target' : 'wolf-waiting'}">
-        ${w.targetName ? w.targetName : 'ยังไม่เลือก'}
-      </span>
-    </div>
-  `).join("");
-
-  let status = "";
-
-  if (summary.unanimous) {
-    status = `
-      <div class="wolf-vote-status agreed">
-        ✅ ทีมหมาป่าเลือก <b>${summary.targetName}</b> ตรงกันแล้ว
-      </div>`;
-  } else if (summary.selectedCount === 0) {
-    status = `
-      <div class="wolf-vote-status waiting">
-        🕐 รอทีมหมาป่าเลือกเหยื่อ
-      </div>`;
-  } else {
-    status = `
-      <div class="wolf-vote-status disagree">
-        ⚠️ เลือกแล้ว ${summary.selectedCount} / ${summary.wolfCount} คน<br>
-        ทีมหมาป่าต้องเลือกเหยื่อคนเดียวกัน
-      </div>`;
-  }
-
-  return `
-    <div class="wolf-vote-box">
-      <div class="wolf-vote-title">🩸 การเลือกเหยื่อของทีม</div>
-      ${rows}
-      ${status}
-      <div class="wolf-vote-help">
-        สามารถเปลี่ยนเป้าหมายได้จนกว่าทีมจะเลือกตรงกัน
-      </div>
-    </div>`;
-}
-
 function renderNight(){
   $("actionTitle").textContent="🌙 ความสามารถของคุณ";
-  const wolfVoteHtml = renderWolfVoteStatus();
   if(!me.alive){$("actions").innerHTML='<div class="notice">คุณเสียชีวิตแล้ว รอดูเกมต่อได้</div>';return}
   if(me.role==="Villager"||me.role==="Tanner"||me.role==="Diseased"||me.role==="Hunter"||(me.role==="Drunk"&&state.night<2)){
     $("actions").innerHTML='<div class="notice">คืนนี้คุณไม่มี Action ที่ต้องทำ</div>';return;
@@ -193,28 +122,10 @@ function renderNight(){
     $("actionTitle").textContent="🐺 เลือก Companion";
     setupPlayerCardSelection("companion","เลือก Companion จากรายชื่อผู้เล่น","✓ ยืนยัน Companion");return;
   }
-    if(
-      me.role==="Werewolf" ||
-      me.role==="WolfCub" ||
-      me.role==="DireWolf" ||
-      (
-        me.role==="Drunk" &&
-        ["Werewolf","WolfCub","DireWolf"].includes(me.trueRole) &&
-        state.night>=2
-      )
-    ){
-      $("actionTitle").textContent="🐺 เลือกเหยื่อ";
-
-      setupPlayerCardSelection(
-        "wolf",
-        "เลือกเหยื่อจากรายชื่อผู้เล่น",
-        "✓ ยืนยันเป้าหมาย"
-      );
-
-      // แสดงว่าเพื่อนหมาป่าแต่ละคนเลือกใคร
-      $("actions").insertAdjacentHTML("afterbegin", wolfVoteHtml);
-      return;
-    }
+  if(me.role==="Werewolf"||me.role==="WolfCub"||me.role==="DireWolf"){
+    $("actionTitle").textContent="🐺 เลือกเหยื่อ";
+    setupPlayerCardSelection("wolf","เลือกเหยื่อจากรายชื่อผู้เล่น","✓ ยืนยันเป้าหมาย");return;
+  }
   if(me.role==="Seer"){
     $("actionTitle").textContent="🔮 ตรวจสอบ 1 คน";
     setupPlayerCardSelection("seer","เลือกผู้เล่นที่ต้องการตรวจสอบ","✓ ยืนยันการตรวจ");return;
@@ -224,36 +135,11 @@ function renderNight(){
     setupPlayerCardSelection("guard","เลือกผู้เล่นที่ต้องการปกป้อง","✓ ยืนยันการปกป้อง");return;
   }
   if(me.role==="Huntress"){
-    $("actionTitle").textContent="🏹 พรานหญิง";
-
-    // พรานหญิงยิงได้เพียง 1 ครั้งตลอดทั้งเกม
-    if(state.huntressUsed){
-      $("actions").innerHTML='<div class="notice">🏹 คุณใช้ความสามารถยิงไปแล้ว</div>';
-      return;
-    }
-
     $("actionTitle").textContent="🏹 พรานหญิง — จะใช้พลังคืนนี้หรือไม่?";
-    $("actions").innerHTML='<button class="primary" onclick="chooseHuntress()">ใช้พลัง</button><button onclick="skipAction()">ไม่ใช้คืนนี้</button>';
-    return;
+    $("actions").innerHTML='<button class="primary" onclick="chooseHuntress()">ใช้พลัง</button><button onclick="skipAction()">ไม่ใช้คืนนี้</button>';return;
   }
 }
-function act(type,data={}){
-  socket.emit("nightAction",{type,...data},r=>{
-    if(!r.ok){
-      alert(r.error);
-      return;
-    }
-
-    // Wolf ต้องสามารถเปลี่ยนเป้าหมายได้
-    // รอ state ล่าสุดจาก Server แล้ว render ใหม่
-    if(type==="wolf"){
-      return;
-    }
-
-    $("actions").innerHTML=
-      '<div class="notice">✅ บันทึก Action แล้ว รอผู้เล่นคนอื่น...</div>';
-  });
-}
+function act(type,data={}){socket.emit("nightAction",{type,...data},r=>{if(!r.ok)alert(r.error);else $("actions").innerHTML='<div class="notice">✅ บันทึก Action แล้ว รอผู้เล่นคนอื่น...</div>'})}
 window.submitWolf=id=>act("wolf",{target:id});
 window.submitSeer=id=>act("seer",{target:id});
 window.submitGuard=id=>act("guard",{target:id});
@@ -344,36 +230,14 @@ window.setupPlayerCardSelection = function(actionType, title, confirmText) {
   window.selectedPlayerId = null;
   window.playerCardAction = actionType;
 
-  // Bodyguard เลือกผู้เล่นที่ยังมีชีวิตทั้งหมด รวมตัวเอง
-  // Action อื่นใช้กติกาเดิม
-  const allowed = actionType === "guard"
-    ? state.players.filter(p => p.alive).map(p => p.id)
-    : candidates().map(p => p.id);
+  const allowed = candidates().map(p => p.id);
 
   document.querySelectorAll("#gamePlayers .player").forEach((card, index) => {
     const p = state.players[index];
 
-    card.classList.remove(
-      "selectable-player",
-      "selected-player",
-      "guard-disabled"
-    );
-
-    // ล้าง onclick เก่าทุกครั้ง
-    card.onclick = null;
-    card.title = "";
+    card.classList.remove("selectable-player", "selected-player");
 
     if (!p || !allowed.includes(p.id)) return;
-
-    // Bodyguard: คนที่ป้องกันเมื่อคืนกดซ้ำไม่ได้
-    if (
-      actionType === "guard" &&
-      p.id === state.lastGuardTarget
-    ) {
-      card.classList.add("guard-disabled");
-      card.title = "ป้องกันผู้เล่นคนนี้เมื่อคืนแล้ว";
-      return;
-    }
 
     card.classList.add("selectable-player");
 
