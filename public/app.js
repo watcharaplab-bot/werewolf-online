@@ -137,7 +137,7 @@ function renderGame(){
       ? `<div class="vote-badge ${votes>0?'has-votes':''}">🗳️ ${votes} โหวต</div>`
       : "";
     return `<div class="player ${p.alive?'':'dead'}">
-      <span>${p.name}</span>
+      <span>${p.name}${me.role==="Cupid" && (state.cupidLovers||[]).includes(p.id) ? " 💘" : ""}</span>
       <span>${p.isHost?'👑':''} ${p.alive?'🟢':'💀'}</span>
       ${voteBadge}
     </div>`;

@@ -132,6 +132,7 @@ function sendState(room) {
           huntressUsed: p.role === "Huntress" ? room.huntressUsed.has(p.id) : false,
         wolfTeam: getWolfTeamFor(room, p),
         lovers: room.lovers.includes(p.id) ? room.lovers : [],
+        cupidLovers: p.role === "Cupid" ? room.lovers : [],
       winner: room.winner, pendingHunter: room.pendingHunter || null,
       memorialDeaths: room.memorialDeaths || [], memorialEndsAt: room.memorialEndsAt || null,
       message: room.message || "",
@@ -670,6 +671,11 @@ io.on("connection", socket => {
     }
 
     room.actions[p.id] = { type, target, a, b };
+
+      // Cupid: บันทึกคู่รักทันทีหลังยืนยัน
+      if (type === "cupid") {
+        room.lovers = [a, b];
+      }
 
     if (type === "seer") {
       const t = room.players.get(target);
