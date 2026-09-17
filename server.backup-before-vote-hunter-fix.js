@@ -75,9 +75,7 @@ function getVoteSummary(room) {
 
   return {
     tally,
-    votedCount: alivePlayers.filter(p =>
-      Object.prototype.hasOwnProperty.call(room.votes || {}, p.id)
-    ).length,
+    votedCount: Object.keys(room.votes || {}).length,
     voterCount: alivePlayers.length
   };
 }
@@ -140,12 +138,7 @@ function sendState(room) {
       winner: room.winner, pendingHunter: room.pendingHunter || null,
       memorialDeaths: room.memorialDeaths || [], memorialEndsAt: room.memorialEndsAt || null,
       message: room.message || "",
-        voteSummary: room.phase === "day"
-        ? {
-            ...getVoteSummary(room),
-            myVoted: Object.prototype.hasOwnProperty.call(room.votes || {}, id)
-          }
-        : null,
+        voteSummary: room.phase === "day" ? getVoteSummary(room) : null,
         wolfVoteSummary:
           room.phase === "night" &&
           (
@@ -422,8 +415,6 @@ function resolveNight(room) {
     room.phase = "gameover";
     room.message = notes.join("\n") || "🌙 จบคืน";
   } else if (room.pendingHunter) {
-    // Hunter must shoot before final winner check
-    room.winner = null;
     room.phase = "hunter";
     room.message = "🏹 นายพรานเสียชีวิต - เลือกคนที่จะยิง";
   } else if (!room.pendingHunter) {
@@ -457,11 +448,6 @@ function afterNightMemorial(room) {
   if (next === "gameover") {
     room.phase = "gameover";
     sendState(room);
-    return;
-  }
-
-  if (next === "night") {
-    startNight(room);
     return;
   }
 
@@ -780,26 +766,7 @@ function finishDayVote(room) {
   room.votes = {};
   room.dayEndsAt = null;
 
-  // หลังโหวต ถ้ามีผู้เสียชีวิต ให้แสดง Memorial ก่อน
-  const voteDead = room.deaths.filter(id => {
-    const p = room.players.get(id);
-    return p && p.deathReason === "Vote";
-  });
-
-  if (voteDead.length > 0) {
-    const nextAfterMemorial = room.pendingHunter
-      ? "hunter"
-      : (checkWinner(room) ? "gameover" : "night");
-
-    room.afterMemorialPhase = nextAfterMemorial;
-    startMemorial(room, voteDead);
-    room.phase = "memorial";
-    room.message = "🗳️ ผลโหวตประหาร";
-    sendState(room);
-    return;
-  }
-
-  if (room.pendingHunter) {
+  if (!room.winner && room.pendingHunter) {
     console.log("HUNTER SERVER DEBUG", {
       pendingHunter: room.pendingHunter,
       phase: room.phase,
@@ -838,12 +805,7 @@ socket.on("vote", ({ target }, cb) => {
   if (!t || t.id === p.id)
     return cb({ error: "โหวตเป้าหมายไม่ถูกต้อง" });
 
-  // 1 คน มีสิทธิ์โหวตเพียง 1 ครั้งต่อ DAY
-  // แม้ Refresh / ออกแล้วกลับเข้ามาใหม่ ก็โหวตซ้ำไม่ได้
-  if (Object.prototype.hasOwnProperty.call(room.votes || {}, p.id)) {
-    return cb({ error: "คุณใช้สิทธิ์โหวตในรอบนี้แล้ว" });
-  }
-
+  // ผู้เล่นสามารถเปลี่ยน Vote ได้จนกว่าทุกคนจะ Vote ครบ
   room.votes[p.id] = target;
 
   cb({ ok: true });

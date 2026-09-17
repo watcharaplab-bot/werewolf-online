@@ -104,17 +104,7 @@ function showDeathPopup(names){
   t--;
   let e=document.getElementById("deathTime");
   if(e)e.textContent=`ปิดอัตโนมัติใน ${t} วินาที`;
-  if(t<=0){
-      clearInterval(x);
-      closeDeathPopup();
-
-      // ให้ HOST สั่งเดินเกมต่ออัตโนมัติหลัง Popup จบ
-      if(state?.phase==="memorial" && state?.hostId===me?.id){
-        socket.emit("continueMemorial", r=>{
-          if(r && r.error) console.error("AUTO MEMORIAL ERROR:",r.error);
-        });
-      }
-    }
+  if(t<=0){clearInterval(x);closeDeathPopup();}
  },1000);
 }
 
@@ -127,7 +117,10 @@ function renderMemorial(){
     .map(name=>`<div class="notice">🕯️ <b>${name}</b></div>`)
     .join("");
 
-
+  if(state.hostId===me.id){
+    $("actions").innerHTML +=
+      '<button class="primary full" onclick="continueMemorial()">ดำเนินเกมต่อ ➜</button>';
+  }
 }
 
 function renderGame(){
@@ -186,15 +179,7 @@ function renderGame(){
     voteProgress.remove();
   }
   $("actions").innerHTML="";
-
-  if(state.phase==="gameover"){
-    $("phaseTitle").textContent="";
-    $("nightNo").textContent="";
-    $("gameMsg").textContent="";
-    $("actions").innerHTML="";
-    renderGameOver();
-    return;
-  }
+  if(state.phase==="gameover"){renderGameOver();return}
   if(state.phase==="memorial"){renderMemorial();return}
   if(state.phase!=="memorial") window.memorialLocalStart=null;
   if(state.phase==="hunter"){renderHunter();return}
@@ -351,51 +336,24 @@ function renderDay(){
   console.log("DAY DEBUG", {phase:state.phase, me:me, candidates:candidates().map(p=>({id:p.id,name:p.name,alive:p.alive}))});
   $("gameMsg").textContent=state.message||"พูดคุยกับผู้เล่นแล้วเลือก 1 คน";
   if(!me.alive){$("actions").innerHTML='<div class="notice">คุณเสียชีวิตแล้ว</div>';return}
-  if(state.voteSummary?.myVoted){
-    $("actions").innerHTML=`<div class="notice">✅ คุณใช้สิทธิ์โหวตในรอบนี้แล้ว<br>⏳ รอผู้เล่นคนอื่นโหวตให้ครบ</div>`;
-    return;
-  }
   setupPlayerCardSelection("vote","เลือกผู้เล่นที่ต้องการโหวตออก","✓ ยืนยันการโหวต");
 }
-window.votePlayer=id=>socket.emit("vote",{target:id},r=>{
-  if(!r.ok){
-    alert(r.error);
-    return;
-  }
+window.votePlayer=id=>socket.emit("vote",{target:id},r=>{if(!r.ok)alert(r.error);else $("actions").innerHTML='<div class="notice">🗳️ โหวตแล้ว รอผู้เล่นคนอื่น...</div>'});
 
-  if(state.voteSummary){
-    state.voteSummary.myVoted=true;
-  }
-
-  $("actions").innerHTML=`<div class="notice">✅ คุณใช้สิทธิ์โหวตในรอบนี้แล้ว<br>⏳ รอผู้เล่นคนอื่นโหวตให้ครบ</div>`;
-});
-
-function renderHunter(){
+function renderHunter(){ console.log("HUNTER DEBUG",{me:me,pendingHunter:state.pendingHunter,phase:state.phase,players:state.players});
   $("actionTitle").textContent="🏹 นายพราน";
   $("actions").innerHTML="";
 
-  const myId=me?.id;
-  const hunterId=state.pendingHunter;
-
-  if(!myId || !hunterId || myId !== hunterId){
+  if(!me || state.pendingHunter !== me.id){
     $("actions").innerHTML='<div class="notice">🏹 รอนายพรานเลือกเป้าหมาย...</div>';
     return;
   }
 
-  // นายพรานตายแล้ว แต่ยังมีสิทธิ์เลือกยิงคนที่ยังมีชีวิต
-  setupPlayerCardSelection(
-    "hunter",
-    "เลือกผู้เล่นที่นายพรานต้องการยิง",
-    "🏹 ยืนยันการยิง"
-  );
+  setupPlayerCardSelection("hunter","เลือกผู้เล่นที่นายพรานต้องการยิง","🏹 ยืนยันการยิง");
 }
-
 window.shoot=id=>socket.emit("hunterShot",{target:id},r=>{if(!r.ok)alert(r.error)});
 
 function renderGameOver(){
-  const actionCard=document.getElementById("actionCard");
-  if(actionCard) actionCard.style.display="none";
-
   const map={
     Village:"🏆 ฝ่ายชาวบ้านชนะ",
     Werewolf:"🐺 ฝ่ายหมาป่าชนะ",
@@ -435,9 +393,6 @@ window.newRound=()=>socket.emit("newRound",r=>{
     return;
   }
   document.getElementById("gameOverPopup")?.remove();
-
-  const actionCard=document.getElementById("actionCard");
-  if(actionCard) actionCard.style.display="";
 });
 socket.on("privateResult",r=>{
   if(r.type==="seer"){
@@ -522,9 +477,7 @@ window.setupPlayerCardSelection = function(actionType, title, confirmText) {
   // Action อื่นใช้กติกาเดิม
   const allowed = actionType === "guard"
     ? state.players.filter(p => p.alive).map(p => p.id)
-    : actionType === "hunter"
-      ? state.players.filter(p => p.alive && p.id !== me.id).map(p => p.id)
-      : candidates().map(p => p.id);
+    : candidates().map(p => p.id);
 
   document.querySelectorAll("#gamePlayers .player").forEach((card, index) => {
     const p = state.players[index];

@@ -75,9 +75,7 @@ function getVoteSummary(room) {
 
   return {
     tally,
-    votedCount: alivePlayers.filter(p =>
-      Object.prototype.hasOwnProperty.call(room.votes || {}, p.id)
-    ).length,
+    votedCount: Object.keys(room.votes || {}).length,
     voterCount: alivePlayers.length
   };
 }
@@ -132,20 +130,13 @@ function sendState(room) {
         me,
         lastGuardTarget: p.role === "Bodyguard" ? (room.lastGuardTarget || null) : null,
           huntressUsed: p.role === "Huntress" ? room.huntressUsed.has(p.id) : false,
-        seerDone: room.actions[p.id]?.type === "seer",
-      wolfTeam: getWolfTeamFor(room, p),
-      direCompanion: p.role === "DireWolf" ? room.direCompanion : null,
+        wolfTeam: getWolfTeamFor(room, p),
         lovers: room.lovers.includes(p.id) ? room.lovers : [],
         cupidLovers: p.role === "Cupid" ? room.lovers : [],
       winner: room.winner, pendingHunter: room.pendingHunter || null,
       memorialDeaths: room.memorialDeaths || [], memorialEndsAt: room.memorialEndsAt || null,
       message: room.message || "",
-        voteSummary: room.phase === "day"
-        ? {
-            ...getVoteSummary(room),
-            myVoted: Object.prototype.hasOwnProperty.call(room.votes || {}, id)
-          }
-        : null,
+        voteSummary: room.phase === "day" ? getVoteSummary(room) : null,
         wolfVoteSummary:
           room.phase === "night" &&
           (
@@ -422,8 +413,6 @@ function resolveNight(room) {
     room.phase = "gameover";
     room.message = notes.join("\n") || "🌙 จบคืน";
   } else if (room.pendingHunter) {
-    // Hunter must shoot before final winner check
-    room.winner = null;
     room.phase = "hunter";
     room.message = "🏹 นายพรานเสียชีวิต - เลือกคนที่จะยิง";
   } else if (!room.pendingHunter) {
@@ -457,11 +446,6 @@ function afterNightMemorial(room) {
   if (next === "gameover") {
     room.phase = "gameover";
     sendState(room);
-    return;
-  }
-
-  if (next === "night") {
-    startNight(room);
     return;
   }
 
@@ -686,18 +670,6 @@ io.on("connection", socket => {
       if (type === "guard" && target === room.lastGuardTarget) return cb({ error: "ห้ามป้องกันคนเดิมติดต่อกัน" });
     }
 
-    // Seer ตรวจได้เพียง 1 คนต่อคืน
-    // ถ้าส่งผลตรวจไปแล้ว ห้ามเปลี่ยนเป้าหมายหรือตรวจซ้ำในคืนเดียวกัน
-    if (type === "seer" && room.actions[p.id]?.type === "seer") {
-      return cb({ error: "Seer ตรวจได้เพียง 1 คนต่อคืน" });
-    }
-
-    if(type==="cupid" && room.actions[p.id]?.type==="cupid")
-      return cb({error:"กามเทพเลือกคู่รักไปแล้ว"});
-
-    if(type==="companion" && room.actions[p.id]?.type==="companion")
-      return cb({error:"เลือก Companion ไปแล้ว"});
-
     room.actions[p.id] = { type, target, a, b };
 
       // Cupid: บันทึกคู่รักทันทีหลังยืนยัน
@@ -780,26 +752,7 @@ function finishDayVote(room) {
   room.votes = {};
   room.dayEndsAt = null;
 
-  // หลังโหวต ถ้ามีผู้เสียชีวิต ให้แสดง Memorial ก่อน
-  const voteDead = room.deaths.filter(id => {
-    const p = room.players.get(id);
-    return p && p.deathReason === "Vote";
-  });
-
-  if (voteDead.length > 0) {
-    const nextAfterMemorial = room.pendingHunter
-      ? "hunter"
-      : (checkWinner(room) ? "gameover" : "night");
-
-    room.afterMemorialPhase = nextAfterMemorial;
-    startMemorial(room, voteDead);
-    room.phase = "memorial";
-    room.message = "🗳️ ผลโหวตประหาร";
-    sendState(room);
-    return;
-  }
-
-  if (room.pendingHunter) {
+  if (!room.winner && room.pendingHunter) {
     console.log("HUNTER SERVER DEBUG", {
       pendingHunter: room.pendingHunter,
       phase: room.phase,
@@ -838,12 +791,7 @@ socket.on("vote", ({ target }, cb) => {
   if (!t || t.id === p.id)
     return cb({ error: "โหวตเป้าหมายไม่ถูกต้อง" });
 
-  // 1 คน มีสิทธิ์โหวตเพียง 1 ครั้งต่อ DAY
-  // แม้ Refresh / ออกแล้วกลับเข้ามาใหม่ ก็โหวตซ้ำไม่ได้
-  if (Object.prototype.hasOwnProperty.call(room.votes || {}, p.id)) {
-    return cb({ error: "คุณใช้สิทธิ์โหวตในรอบนี้แล้ว" });
-  }
-
+  // ผู้เล่นสามารถเปลี่ยน Vote ได้จนกว่าทุกคนจะ Vote ครบ
   room.votes[p.id] = target;
 
   cb({ ok: true });

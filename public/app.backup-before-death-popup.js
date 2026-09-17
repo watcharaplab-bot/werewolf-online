@@ -90,36 +90,7 @@ $("startBtn").onclick=()=>{
   socket.emit("startGame",{roleCounts:counts},r=>{if(!r.ok)err("hostMsg",r.error)});
 };
 
-function closeDeathPopup(){
-  document.getElementById("deathPopup")?.remove();
-}
-
-function showDeathPopup(names){
- let d=document.createElement("div");
- d.id="deathPopup";
- d.innerHTML=`<div class="deathBox">🕯️<h2>${names.join("<br>")}</h2><b>ได้เสียชีวิตแล้ว</b><p>โปรดไว้อาลัยแด่ผู้เสียชีวิต</p><p id="deathTime">ปิดอัตโนมัติใน 10 วินาที</p><button onclick="closeDeathPopup()">ปิด</button></div>`;
- document.body.appendChild(d);
- let t=10;
- let x=setInterval(()=>{
-  t--;
-  let e=document.getElementById("deathTime");
-  if(e)e.textContent=`ปิดอัตโนมัติใน ${t} วินาที`;
-  if(t<=0){
-      clearInterval(x);
-      closeDeathPopup();
-
-      // ให้ HOST สั่งเดินเกมต่ออัตโนมัติหลัง Popup จบ
-      if(state?.phase==="memorial" && state?.hostId===me?.id){
-        socket.emit("continueMemorial", r=>{
-          if(r && r.error) console.error("AUTO MEMORIAL ERROR:",r.error);
-        });
-      }
-    }
- },1000);
-}
-
 function renderMemorial(){
-  showDeathPopup(state.memorialDeaths||[]);
   $("phaseTitle").textContent="🕯️ ไว้อาลัย";
   $("gameMsg").textContent="ขอร่วมไว้อาลัยแด่ผู้จากไป";
 
@@ -127,7 +98,10 @@ function renderMemorial(){
     .map(name=>`<div class="notice">🕯️ <b>${name}</b></div>`)
     .join("");
 
-
+  if(state.hostId===me.id){
+    $("actions").innerHTML +=
+      '<button class="primary full" onclick="continueMemorial()">ดำเนินเกมต่อ ➜</button>';
+  }
 }
 
 function renderGame(){
@@ -153,7 +127,6 @@ function renderGame(){
     $("myRole").innerHTML=`
       <div class="myrole">
         <div class="roleImageWrap"><img class="roleImage" src="${roleImages[me.role] || ''}" alt="${roles[me.role]?.[1] || me.role}"></div>
-      <div class="rolePlayerName">👤 ${me.name}</div>
         <div class="roleTitle">${roles[me.role]?.[1]||me.role}</div>
         <div class="faction">${me.faction}</div>
         ${me.role==="Drunk"&&state.night<2
@@ -186,15 +159,7 @@ function renderGame(){
     voteProgress.remove();
   }
   $("actions").innerHTML="";
-
-  if(state.phase==="gameover"){
-    $("phaseTitle").textContent="";
-    $("nightNo").textContent="";
-    $("gameMsg").textContent="";
-    $("actions").innerHTML="";
-    renderGameOver();
-    return;
-  }
+  if(state.phase==="gameover"){renderGameOver();return}
   if(state.phase==="memorial"){renderMemorial();return}
   if(state.phase!=="memorial") window.memorialLocalStart=null;
   if(state.phase==="hunter"){renderHunter();return}
@@ -262,15 +227,11 @@ function renderNight(){
     $("actions").innerHTML='<div class="notice">คืนนี้คุณไม่มี Action ที่ต้องทำ</div>';return;
   }
   if(me.role==="Cupid"&&state.night===1){
-      if((state.cupidLovers||[]).length===2){
-        $("actions").innerHTML='<div class="notice">💘 เลือกคู่รักเรียบร้อยแล้ว</div>';
-        return;
-      }
     $("actions").innerHTML='<div class="notice">💘 เลือกคู่รัก 2 คน</div><div id="cup"></div><button class="primary full" onclick="submitCupid()">ยืนยันคู่รัก</button>';
     window.cupA=null;window.cupB=null;
     $("cup").innerHTML=candidates().map(p=>`<button class="target" id="cup-${p.id}" onclick="pickCup('${p.id}')">${p.name}</button>`).join("");return;
   }
-  if(me.role==="DireWolf"&&state.night===1){if(state.direCompanion){$("actions").innerHTML='<div class="notice">🐺 เลือก Companion เรียบร้อยแล้ว</div>';return;}
+  if(me.role==="DireWolf"&&state.night===1){
     $("actionTitle").textContent="🐺 เลือก Companion";
     setupPlayerCardSelection("companion","เลือก Companion จากรายชื่อผู้เล่น","✓ ยืนยัน Companion");return;
   }
@@ -296,7 +257,7 @@ function renderNight(){
       $("actions").insertAdjacentHTML("afterbegin", wolfVoteHtml);
       return;
     }
-  if(me.role==="Seer"){if(state.seerDone){$("actions").innerHTML='<div class="notice">🔮 ตรวจสอบเรียบร้อยแล้ว</div>';return;}
+  if(me.role==="Seer"){
     $("actionTitle").textContent="🔮 ตรวจสอบ 1 คน";
     setupPlayerCardSelection("seer","เลือกผู้เล่นที่ต้องการตรวจสอบ","✓ ยืนยันการตรวจ");return;
   }
@@ -351,94 +312,29 @@ function renderDay(){
   console.log("DAY DEBUG", {phase:state.phase, me:me, candidates:candidates().map(p=>({id:p.id,name:p.name,alive:p.alive}))});
   $("gameMsg").textContent=state.message||"พูดคุยกับผู้เล่นแล้วเลือก 1 คน";
   if(!me.alive){$("actions").innerHTML='<div class="notice">คุณเสียชีวิตแล้ว</div>';return}
-  if(state.voteSummary?.myVoted){
-    $("actions").innerHTML=`<div class="notice">✅ คุณใช้สิทธิ์โหวตในรอบนี้แล้ว<br>⏳ รอผู้เล่นคนอื่นโหวตให้ครบ</div>`;
-    return;
-  }
   setupPlayerCardSelection("vote","เลือกผู้เล่นที่ต้องการโหวตออก","✓ ยืนยันการโหวต");
 }
-window.votePlayer=id=>socket.emit("vote",{target:id},r=>{
-  if(!r.ok){
-    alert(r.error);
-    return;
-  }
+window.votePlayer=id=>socket.emit("vote",{target:id},r=>{if(!r.ok)alert(r.error);else $("actions").innerHTML='<div class="notice">🗳️ โหวตแล้ว รอผู้เล่นคนอื่น...</div>'});
 
-  if(state.voteSummary){
-    state.voteSummary.myVoted=true;
-  }
-
-  $("actions").innerHTML=`<div class="notice">✅ คุณใช้สิทธิ์โหวตในรอบนี้แล้ว<br>⏳ รอผู้เล่นคนอื่นโหวตให้ครบ</div>`;
-});
-
-function renderHunter(){
+function renderHunter(){ console.log("HUNTER DEBUG",{me:me,pendingHunter:state.pendingHunter,phase:state.phase,players:state.players});
   $("actionTitle").textContent="🏹 นายพราน";
   $("actions").innerHTML="";
 
-  const myId=me?.id;
-  const hunterId=state.pendingHunter;
-
-  if(!myId || !hunterId || myId !== hunterId){
+  if(!me || state.pendingHunter !== me.id){
     $("actions").innerHTML='<div class="notice">🏹 รอนายพรานเลือกเป้าหมาย...</div>';
     return;
   }
 
-  // นายพรานตายแล้ว แต่ยังมีสิทธิ์เลือกยิงคนที่ยังมีชีวิต
-  setupPlayerCardSelection(
-    "hunter",
-    "เลือกผู้เล่นที่นายพรานต้องการยิง",
-    "🏹 ยืนยันการยิง"
-  );
+  setupPlayerCardSelection("hunter","เลือกผู้เล่นที่นายพรานต้องการยิง","🏹 ยืนยันการยิง");
 }
-
 window.shoot=id=>socket.emit("hunterShot",{target:id},r=>{if(!r.ok)alert(r.error)});
 
 function renderGameOver(){
-  const actionCard=document.getElementById("actionCard");
-  if(actionCard) actionCard.style.display="none";
-
-  const map={
-    Village:"🏆 ฝ่ายชาวบ้านชนะ",
-    Werewolf:"🐺 ฝ่ายหมาป่าชนะ",
-    Tanner:"🤡 ยาจกชนะทันที"
-  };
-
-  $("actionTitle").textContent="";
-  $("actions").innerHTML="";
-  $("gameMsg").textContent="";
-
-  // ลบ popup เก่าก่อน ป้องกันซ้ำ
-  document.getElementById("gameOverPopup")?.remove();
-
-  const d=document.createElement("div");
-  d.id="gameOverPopup";
-  d.className="deathPopup";
-
-  d.innerHTML=`
-    <div class="deathBox">
-      <div style="font-size:42px">🏆</div>
-      <h1 style="margin:10px 0">GAME OVER</h1>
-      <h2>${map[state.winner] || state.winner}</h2>
-      <p>เกมจบแล้ว</p>
-      ${
-        state.hostId===me.id
-        ? '<button class="primary full" onclick="newRound()">🔄 เริ่มเกมใหม่</button>'
-        : '<p>⏳ รอ HOST เริ่มเกมใหม่</p>'
-      }
-    </div>
-  `;
-
-  document.body.appendChild(d);
+  const map={Village:"🏆 ฝ่ายชาวบ้านชนะ",Werewolf:"🐺 ฝ่ายหมาป่าชนะ",Tanner:"🤡 ยาจกชนะทันที"};
+  $("actionTitle").textContent="GAME OVER";
+  $("actions").innerHTML=`<div class="winner">${map[state.winner]||state.winner}</div>${state.hostId===me.id?'<button class="primary full" onclick="newRound()">🔄 เล่นรอบใหม่</button>':''}`;
 }
-window.newRound=()=>socket.emit("newRound",r=>{
-  if(!r.ok){
-    alert(r.error);
-    return;
-  }
-  document.getElementById("gameOverPopup")?.remove();
-
-  const actionCard=document.getElementById("actionCard");
-  if(actionCard) actionCard.style.display="";
-});
+window.newRound=()=>socket.emit("newRound",r=>{if(!r.ok)alert(r.error)});
 socket.on("privateResult",r=>{
   if(r.type==="seer"){
     $("private").innerHTML=`<div class="notice">🔮 ผลการตรวจ<br><br>${r.target}<br><b>${r.isWolf?"🐺 ฝ่ายหมาป่า":"🏡 ฝ่ายชาวบ้าน"}</b></div>`;
@@ -522,9 +418,7 @@ window.setupPlayerCardSelection = function(actionType, title, confirmText) {
   // Action อื่นใช้กติกาเดิม
   const allowed = actionType === "guard"
     ? state.players.filter(p => p.alive).map(p => p.id)
-    : actionType === "hunter"
-      ? state.players.filter(p => p.alive && p.id !== me.id).map(p => p.id)
-      : candidates().map(p => p.id);
+    : candidates().map(p => p.id);
 
   document.querySelectorAll("#gamePlayers .player").forEach((card, index) => {
     const p = state.players[index];
