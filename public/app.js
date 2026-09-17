@@ -6,6 +6,22 @@ const roles = {
   Diseased:["🦠","ผู้ติดโรค"],Huntress:["🏹","พรานหญิง"],Drunk:["🍺","คนเมา"],
   Werewolf:["🐺","มนุษย์หมาป่า"],WolfCub:["🐺","ลูกหมาป่า"],DireWolf:["🐺","หมาป่าโลกันตร์"]
 };
+
+const roleImages = {
+  Villager: "/images/roles/villager.png",
+  Seer: "/images/roles/seer.png",
+  Bodyguard: "/images/roles/bodyguard.png",
+  Hunter: "/images/roles/hunter.png",
+  Cupid: "/images/roles/cupid.png",
+  Tanner: "/images/roles/tanner.png",
+  Diseased: "/images/roles/diseased.png",
+  Huntress: "/images/roles/huntress.png",
+  Drunk: "/images/roles/drunk.png",
+  Werewolf: "/images/roles/werewolf.png",
+  WolfCub: "/images/roles/wolfcub.png",
+  DireWolf: "/images/roles/direwolf.png"
+};
+
 let me=null, state=null, counts={};
 
 function show(id){["home","lobby","game"].forEach(x=>$(x).classList.toggle("hidden",x!==id));}
@@ -37,12 +53,34 @@ function renderLobby(){
 }
 function renderRoles(){
   const order=Object.keys(roles);
+
   $("roles").innerHTML=order.map(r=>{
     const [emoji,name]=roles[r], n=counts[r]||0;
-    return `<div class="role"><div class="roleName"><span>${emoji}</span><span>${name}<small class="muted"> ${r}</small></span></div><div class="counter"><button onclick="changeRole('${r}',-1)">−</button><span>${n}</span><button onclick="changeRole('${r}',1)">+</button></div></div>`;
+    const image=roleImages[r];
+
+    return `
+      <div class="role role-card ${n>0 ? 'role-selected' : ''}">
+        <div class="role-image-box">
+          <img class="role-select-image" src="${image}" alt="${name}">
+          ${n>0 ? `<div class="role-count-badge">×${n}</div>` : ''}
+        </div>
+        <div class="role-select-info">
+          <div class="role-select-name">${name}</div>
+          <small class="muted">${r}</small>
+          <div class="counter role-select-counter">
+            <button onclick="changeRole('${r}',-1)">−</button>
+            <span>${n}</span>
+            <button onclick="changeRole('${r}',1)">+</button>
+          </div>
+        </div>
+      </div>
+    `;
   }).join("");
-  $("roleTotal").textContent=Object.values(counts).reduce((a,b)=>a+b,0);
+
+  $("roleTotal").textContent=
+    Object.values(counts).reduce((a,b)=>a+b,0);
 }
+
 window.changeRole=(r,d)=>{counts[r]=Math.max(0,Math.min(15,(counts[r]||0)+d));renderRoles()};
 $("startBtn").onclick=()=>{
   socket.emit("startGame",{roleCounts:counts},r=>{if(!r.ok)err("hostMsg",r.error)});
@@ -84,7 +122,7 @@ function renderGame(){
 
     $("myRole").innerHTML=`
       <div class="myrole">
-        <div class="roleEmoji">${me.emoji||"❓"}</div>
+        <div class="roleImageWrap"><img class="roleImage" src="${roleImages[me.role] || ''}" alt="${roles[me.role]?.[1] || me.role}"></div>
         <div class="roleTitle">${roles[me.role]?.[1]||me.role}</div>
         <div class="faction">${me.faction}</div>
         ${me.role==="Drunk"&&state.night<2

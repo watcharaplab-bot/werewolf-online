@@ -344,3 +344,263 @@
   transform: none !important;
   box-shadow: none !important;
 }
+
+/* ===== Role Character Image ===== */
+.roleImageWrap {
+  width: 100%;
+  max-width: 240px;
+  margin: 0 auto 14px;
+  display: flex;
+  justify-content: center;
+}
+
+.roleImage {
+  width: 100%;
+  height: auto;
+  display: block;
+  border-radius: 18px;
+  object-fit: contain;
+  box-shadow: 0 8px 24px rgba(0,0,0,.35);
+}
+
+@media (max-width: 600px) {
+  .roleImageWrap {
+    max-width: 200px;
+    margin-bottom: 10px;
+  }
+
+  .roleImage {
+    border-radius: 14px;
+  }
+}
+
+/* ===== HOST ROLE CARD SELECTOR ===== */
+
+#roles {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.role-card {
+  overflow: hidden;
+  padding: 0 !important;
+  display: flex;
+  flex-direction: column;
+  border-radius: 16px;
+}
+
+.role-select-image {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+.role-select-info {
+  padding: 10px;
+  text-align: center;
+}
+
+.role-select-name {
+  font-size: 16px;
+  font-weight: 700;
+  margin-bottom: 2px;
+}
+
+.role-select-counter {
+  margin-top: 9px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+
+.role-select-counter button {
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  font-size: 22px;
+  font-weight: 700;
+}
+
+.role-select-counter span {
+  min-width: 25px;
+  font-size: 18px;
+  font-weight: 700;
+}
+
+@media (min-width: 700px) {
+  #roles {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+/* ===== HOST ROLE CARD SELECTOR ===== */
+#roles {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.role-card {
+  overflow: hidden;
+  padding: 0 !important;
+  display: flex;
+  flex-direction: column;
+  border-radius: 14px;
+}
+
+.role-select-image {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+.role-select-info {
+  padding: 8px;
+  text-align: center;
+}
+
+.role-select-name {
+  font-size: 15px;
+  font-weight: 700;
+  margin-bottom: 2px;
+}
+
+.role-select-counter {
+  margin-top: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.role-select-counter button {
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.role-select-counter span {
+  min-width: 24px;
+  font-size: 17px;
+  font-weight: 700;
+}
+
+@media (min-width: 700px) {
+  #roles {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+/* Mobile: 3 Role Cards per row */
+@media (max-width: 699px) {
+  #roles {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 6px;
+  }
+
+  .role-select-info {
+    padding: 6px 2px;
+  }
+
+  .role-select-name {
+    font-size: 12px;
+  }
+
+  .role-select-info small {
+    font-size: 9px;
+  }
+
+  .role-select-counter {
+    gap: 3px;
+    margin-top: 6px;
+  }
+
+  .role-select-counter button {
+    width: 27px;
+    height: 27px;
+    font-size: 16px;
+  }
+
+  .role-select-counter span {
+    min-width: 14px;
+    font-size: 13px;
+  }
+}
+
+/* Mobile: 4 Role Cards per row */
+@media (max-width: 699px) {
+  #roles {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 4px;
+  }
+
+  .role-select-info {
+    padding: 5px 1px;
+  }
+
+  .role-select-name {
+    font-size: 10px;
+  }
+
+  .role-select-info small {
+    font-size: 8px;
+  }
+
+  .role-select-counter {
+    gap: 2px;
+    margin-top: 5px;
+  }
+
+  .role-select-counter button {
+    width: 23px;
+    height: 25px;
+    font-size: 14px;
+    padding: 0;
+  }
+
+  .role-select-counter span {
+    min-width: 11px;
+    font-size: 11px;
+  }
+}
+
+/* Mobile: 4 Role Cards per row */
+@media (max-width: 699px) {
+  #roles {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 4px;
+  }
+
+  .role-select-info {
+    padding: 5px 1px;
+  }
+
+  .role-select-name {
+    font-size: 10px;
+  }
+
+  .role-select-info small {
+    font-size: 8px;
+  }
+
+  .role-select-counter {
+    gap: 2px;
+    margin-top: 5px;
+  }
+
+  .role-select-counter button {
+    width: 23px;
+    height: 25px;
+    font-size: 14px;
+    padding: 0;
+  }
+
+  .role-select-counter span {
+    min-width: 11px;
+    font-size: 11px;
+  }
+}
