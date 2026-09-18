@@ -871,50 +871,35 @@ socket.on("vote", ({ target }, cb) => {
 });
 
 socket.on("hunterShot", ({ target }, cb) => {
-    const room = [...rooms.values()].find(r => r.players.has(socket.id));
+  const room = [...rooms.values()].find(r => r.players.has(socket.id));
 
-    if (!room || room.phase !== "hunter" || room.pendingHunter !== socket.id)
-        return cb({ error: "ไม่มีสิทธิ์" });
+  if (!room || room.phase !== "hunter" || room.pendingHunter !== socket.id)
+    return cb({ error: "ไม่มีสิทธิ์" });
 
-    const t = aliveById(room, target);
+  const t = aliveById(room, target);
+  if (!t || t.id === socket.id)
+    return cb({ error: "เป้าหมายไม่ถูกต้อง" });
 
-    if (!t || t.id === socket.id)
-        return cb({ error: "เป้าหมายไม่ถูกต้อง" });
+  const ds = kill(room, t.id, "Hunter");
+  room.deaths.push(...ds);
+  room.pendingHunter = null;
 
-    // นายพรานคนปัจจุบันใช้สิทธิแล้ว
-    // ล้างก่อน kill() เพื่อให้ถ้ายิงโดนนายพรานอีกคน
-    // kill() สามารถตั้ง pendingHunter เป็นนายพรานคนถัดไปได้
-    room.pendingHunter = null;
+  cb({ ok: true });
 
-    const ds = kill(room, t.id, "Hunter");
-    room.deaths.push(...ds);
-
-    cb({ ok: true });
-
-    // ถ้ามีนายพรานอีกคนตายจากกระสุน
-    // ให้ยิงต่อก่อนตรวจผู้ชนะ
-    if (room.pendingHunter) {
-        room.winner = null;
-        room.phase = "hunter";
-        room.message = "🏹 นายพรานเสียชีวิต - เลือกคนที่จะยิง";
-        sendState(room);
-        return;
-    }
-
-    // ไม่มีนายพรานยิงต่อแล้ว จึงค่อยตัดสินผลเกม
-    if (checkWinner(room)) {
-        room.phase = "gameover";
-        room.dayEndsAt = null;
-        sendState(room);
-        return;
-    }
-
-    room.phase = "day";
-    room.votes = {};
+  if (checkWinner(room)) {
+    room.phase = "gameover";
     room.dayEndsAt = null;
-    room.message = "☀️ นายพรานยิงแล้ว - เข้าสู่ช่วงพูดคุยและโหวต";
-
     sendState(room);
+    return;
+  }
+
+  room.phase = "day";
+  room.votes = {};
+  room.dayEndsAt = null;
+  room.message = "☀️ นายพรานยิงแล้ว — เข้าสู่ช่วงพูดคุยและโหวต";
+
+
+  sendState(room);
 });
 
 socket.on("continueMemorial", cb => {
