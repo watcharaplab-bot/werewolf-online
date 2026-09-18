@@ -144,7 +144,7 @@ function sendState(room) {
         voteSummary: room.phase === "day"
         ? {
             ...getVoteSummary(room),
-            myVoted: Object.prototype.hasOwnProperty.call(room.votes || {}, id)
+            myVoted: Object.prototype.hasOwnProperty.call(room.votes || {}, p.id)
           }
         : null,
         wolfVoteSummary:
