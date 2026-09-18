@@ -88,13 +88,6 @@ document.addEventListener("pointerdown", ()=>{
 
 socket.on("state",s=>{
   state=s; me=s.me;
-
-  // แสดง Wolf Chat เฉพาะผู้เล่นที่ Server อนุญาต
-  const wolfChatCard = $("wolfChatCard");
-  if (wolfChatCard) {
-    wolfChatCard.classList.toggle("hidden", !me?.canWolfChat);
-  }
-
   updateGameMusic(s);
   if(!s.started){ renderLobby(); show("lobby"); }
   else { renderGame(); show("game"); }
@@ -780,71 +773,3 @@ window.leaveGame = function(){
     location.reload();
   });
 };
-
-// ===== WOLF CHAT =====
-function addWolfChatMessage(msg) {
-  const box = $("wolfChatMessages");
-  if (!box || !msg) return;
-
-  const row = document.createElement("div");
-  row.className = "wolf-chat-message";
-
-  const name = document.createElement("span");
-  name.className = "wolf-chat-message-name";
-  name.textContent = (msg.name || "หมาป่า") + ":";
-
-  const text = document.createElement("span");
-  text.textContent = " " + (msg.message || "");
-
-  row.appendChild(name);
-  row.appendChild(text);
-  box.appendChild(row);
-  box.scrollTop = box.scrollHeight;
-}
-
-function sendWolfChat() {
-  const input = $("wolfChatInput");
-  const msgBox = $("wolfChatMsg");
-  if (!input) return;
-
-  const message = input.value.trim();
-  if (!message) return;
-
-  socket.emit("wolfChatSend", { message }, (res) => {
-    if (res?.error) {
-      if (msgBox) msgBox.textContent = res.error;
-      return;
-    }
-
-    input.value = "";
-    if (msgBox) msgBox.textContent = "";
-  });
-}
-
-$("wolfChatSendBtn")?.addEventListener("click", sendWolfChat);
-
-$("wolfChatInput")?.addEventListener("keydown", (e) => {
-  if (e.key === "Enter") {
-    e.preventDefault();
-    sendWolfChat();
-  }
-});
-
-socket.on("wolfChatMessage", (msg) => {
-  addWolfChatMessage(msg);
-});
-
-// โหลดประวัติ Wolf Chat จาก Server
-function loadWolfChatHistory() {
-  if (!me?.canWolfChat) return;
-
-  socket.emit("wolfChatGet", (res) => {
-    if (!res?.ok) return;
-
-    const box = $("wolfChatMessages");
-    if (!box) return;
-
-    box.innerHTML = "";
-    (res.messages || []).forEach(addWolfChatMessage);
-  });
-}

@@ -40,21 +40,6 @@ const ROLE_INFO = {
 const isWolf = r => ["Werewolf", "WolfCub", "DireWolf"].includes(r);
 const alive = p => p.alive;
 
-function canUseWolfChat(player) {
-  if (!player) return false;
-
-  // หมาป่าที่รู้บทแล้ว เข้าแชทได้เสมอ แม้ตายแล้ว
-  if (isWolf(player.role)) return true;
-
-  // ขี้เมาที่ยังไม่รู้บท ห้ามเข้า
-  // แต่ถ้าตายก่อนรู้บท และ trueRole เป็นหมาป่า ให้เข้าได้ทันที
-  if (player.role === "Drunk") {
-    return !player.alive && isWolf(player.trueRole);
-  }
-
-  return false;
-}
-
 function rid() { return crypto.randomBytes(3).toString("hex").toUpperCase(); }
 
 function newRoom(code, hostId) {
@@ -64,8 +49,7 @@ function newRoom(code, hostId) {
     actions: {}, votes: {}, deaths: [], lovers: [],
     direCompanion: null, wolfCubBonus: false,
     diseasedBlocked: false, huntressUsed: new Set(),
-    lastGuardTarget: null, winner: null,
-    wolfChat: []
+    lastGuardTarget: null, winner: null
   };
 }
 
@@ -140,8 +124,7 @@ function sendState(room) {
     const me = {
       id: p.id, name: p.name, alive: p.alive, role: p.role,
       trueRole: p.trueRole || null, faction: ROLE_INFO[p.role]?.faction,
-      emoji: ROLE_INFO[p.role]?.emoji, night: room.night,
-      canWolfChat: canUseWolfChat(p)
+      emoji: ROLE_INFO[p.role]?.emoji, night: room.night
     };
     io.to(p.id).emit("state", {
       room: room.code, hostId: room.hostId, started: room.started,
@@ -1025,59 +1008,6 @@ socket.on("newRound", cb => {
     }
 
     if (cb) cb({ ok: true });
-  });
-
-  // ===== WOLF CHAT =====
-  socket.on("wolfChatSend", ({ message } = {}, cb) => {
-    const room = [...rooms.values()].find(r => r.players.has(socket.id));
-    if (!room) return cb?.({ error: "ไม่พบห้อง" });
-
-    const player = room.players.get(socket.id);
-    if (!canUseWolfChat(player)) {
-      return cb?.({ error: "ไม่มีสิทธิ์ใช้แชทหมาป่า" });
-    }
-
-    message = String(message || "").trim().slice(0, 300);
-    if (!message) return cb?.({ error: "ข้อความว่าง" });
-
-    const msg = {
-      id: crypto.randomBytes(6).toString("hex"),
-      playerId: player.id,
-      name: player.name,
-      message,
-      time: Date.now()
-    };
-
-    room.wolfChat ||= [];
-    room.wolfChat.push(msg);
-
-    if (room.wolfChat.length > 100) {
-      room.wolfChat = room.wolfChat.slice(-100);
-    }
-
-    // ส่งเฉพาะผู้เล่นที่มีสิทธิ์เห็น Wolf Chat
-    for (const p of room.players.values()) {
-      if (canUseWolfChat(p)) {
-        io.to(p.id).emit("wolfChatMessage", msg);
-      }
-    }
-
-    cb?.({ ok: true });
-  });
-
-  socket.on("wolfChatGet", (cb) => {
-    const room = [...rooms.values()].find(r => r.players.has(socket.id));
-    if (!room) return cb?.({ error: "ไม่พบห้อง" });
-
-    const player = room.players.get(socket.id);
-    if (!canUseWolfChat(player)) {
-      return cb?.({ error: "ไม่มีสิทธิ์ใช้แชทหมาป่า" });
-    }
-
-    cb?.({
-      ok: true,
-      messages: room.wolfChat || []
-    });
   });
 
   socket.on("disconnect", () => {
