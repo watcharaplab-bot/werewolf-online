@@ -302,7 +302,18 @@ function renderNight(){
   }
   if(me.role==="Bodyguard"){
     $("actionTitle").textContent="🛡️ ปกป้อง 1 คน";
-    setupPlayerCardSelection("guard","เลือกผู้เล่นที่ต้องการปกป้อง","✓ ยืนยันการปกป้อง");return;
+
+    if(state.guardDone){
+      $("actions").innerHTML='<div class="notice">🛡️ ยืนยันการปกป้องเรียบร้อยแล้ว<br>⏳ รอผู้เล่นอื่นดำเนินการ...</div>';
+      return;
+    }
+
+    setupPlayerCardSelection(
+      "guard",
+      "เลือกผู้เล่นที่ต้องการปกป้อง",
+      "✓ ยืนยันการปกป้อง"
+    );
+    return;
   }
   if(me.role==="Huntress"){
     $("actionTitle").textContent="🏹 พรานหญิง";

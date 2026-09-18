@@ -526,16 +526,13 @@ function allNightActionsDone(room) {
     p => p.alive && availableActions(room, p).length
   );
 
-  // ทุกคนที่มีหน้าที่กลางคืน ต้องส่ง Action ที่ถูกต้องแล้ว
-  for (const p of needed) {
-    const allowed = availableActions(room, p);
-    const action = room.actions[p.id];
-
-    if (!action) return false;
-    if (!allowed.includes(action.type)) return false;
+  // ทุกคนที่มี Action ต้องทำ Action ก่อน
+  if (!needed.every(p => room.actions[p.id])) {
+    return false;
   }
 
-  // ถ้ามีหมาป่าหลายตัว ต้องเลือกเป้าหมายตรงกัน
+  // ถ้ามีหมาป่ามากกว่า 1 ตัว
+  // หมาป่าทุกตัวต้องเลือกเหยื่อคนเดียวกัน
   const wolfSummary = getWolfVoteSummary(room);
 
   if (wolfSummary.wolfCount > 0 && !wolfSummary.unanimous) {
