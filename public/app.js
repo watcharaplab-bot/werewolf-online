@@ -92,6 +92,16 @@ $("startBtn").onclick=()=>{
 
 function closeDeathPopup(){
   document.getElementById("deathPopup")?.remove();
+
+  // ถ้า HOST ปิด Memorial เอง ให้เกมเดินต่อทันที
+  // เช่น Hunter ถูกประหาร -> เข้าหน้า Hunter ยิง
+  if(state?.phase==="memorial" && state?.hostId===me?.id){
+    socket.emit("continueMemorial", r=>{
+      if(r && r.error){
+        console.error("MEMORIAL CONTINUE ERROR:",r.error);
+      }
+    });
+  }
 }
 
 function showDeathPopup(names){
@@ -108,14 +118,75 @@ function showDeathPopup(names){
       clearInterval(x);
       closeDeathPopup();
 
-      // ให้ HOST สั่งเดินเกมต่ออัตโนมัติหลัง Popup จบ
-      if(state?.phase==="memorial" && state?.hostId===me?.id){
+      // ให้ HOST สั่งเดินเกมต่ออัตโนมัติ เฉพาะเมื่อยังอยู่ Memorial
+      // และ Popup ยังไม่ได้ถูกปิดเอง
+      if(
+        document.getElementById("deathPopup") &&
+        state?.phase==="memorial" &&
+        state?.hostId===me?.id
+      ){
         socket.emit("continueMemorial", r=>{
           if(r && r.error) console.error("AUTO MEMORIAL ERROR:",r.error);
         });
       }
     }
  },1000);
+}
+
+
+function showNoDeathPopup(type){
+  document.getElementById("noDeathPopup")?.remove();
+
+  const isNight = type === "night";
+  const icon = isNight ? "🌙" : "🗳️";
+  const title = isNight
+    ? "คืนนี้ไม่มีผู้เสียชีวิต"
+    : "ไม่มีผู้เสียชีวิตจากการประหาร";
+
+  const d=document.createElement("div");
+  d.id="noDeathPopup";
+  d.className="deathPopup";
+
+  d.innerHTML=`
+    <div class="deathBox">
+      <button
+        onclick="closeNoDeathPopup()"
+        style="position:absolute;right:14px;top:10px;border:0;background:transparent;font-size:26px;cursor:pointer"
+      >✕</button>
+
+      <div style="font-size:48px">${icon}</div>
+      <h2>${title}</h2>
+
+      <p>Popup จะปิดใน
+        <b id="noDeathTime">5</b>
+        วินาที
+      </p>
+
+      <button class="primary full" onclick="closeNoDeathPopup()">
+        ปิด
+      </button>
+    </div>
+  `;
+
+  document.body.appendChild(d);
+
+  let t=5;
+
+  const timer=setInterval(()=>{
+    t--;
+
+    const el=document.getElementById("noDeathTime");
+    if(el) el.textContent=t;
+
+    if(t<=0){
+      clearInterval(timer);
+      closeNoDeathPopup();
+    }
+  },1000);
+}
+
+function closeNoDeathPopup(){
+  document.getElementById("noDeathPopup")?.remove();
 }
 
 function renderMemorial(){
@@ -455,7 +526,20 @@ socket.on("privateResult",r=>{
     $("private").innerHTML=`<div class="notice">🔮 ผลการตรวจ<br><br>${r.target}<br><b>${r.isWolf?"🐺 ฝ่ายหมาป่า":"🏡 ฝ่ายชาวบ้าน"}</b></div>`;
   }
 });
-socket.on("nightResult",r=>{ $("gameMsg").textContent=r.message||""; });
+socket.on("noDeathResult",r=>{
+  if(r && r.type==="vote"){
+    showNoDeathPopup("vote");
+  }
+});
+
+socket.on("nightResult",r=>{
+  $("gameMsg").textContent=r.message||"";
+
+  // คืนนี้ไม่มีผู้เสียชีวิต
+  if(Array.isArray(r.deaths) && r.deaths.length===0){
+    showNoDeathPopup("night");
+  }
+});
 
 
 // Connection safety: a room shown on screen may no longer exist after a server
@@ -623,3 +707,22 @@ socket.on("voteUpdate", summary => {
   renderGame();
 });
 
+
+// ===== LEAVE GAME =====
+window.leaveGame = function(){
+  const ok = confirm("🚪 ต้องการออกจากเกมใช่หรือไม่?");
+  if(!ok) return;
+
+  socket.emit("leaveGame", {}, (r)=>{
+    if(r && r.error){
+      alert(r.error);
+      return;
+    }
+
+    // ล้างข้อมูลห้องเดิม ป้องกัน Auto Reconnect กลับเข้าห้อง
+    localStorage.removeItem("ww_room");
+    localStorage.removeItem("ww_name");
+
+    location.reload();
+  });
+};

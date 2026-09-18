@@ -803,6 +803,11 @@ function finishDayVote(room) {
     return;
   }
 
+  // ไม่มีผู้เล่นถูกประหาร เช่น โหวตเสมอ / ไม่มีผลโหวต
+  if (voteDead.length === 0) {
+    io.to(room.code).emit("noDeathResult", { type: "vote" });
+  }
+
   if (room.pendingHunter) {
     console.log("HUNTER SERVER DEBUG", {
       pendingHunter: room.pendingHunter,
@@ -919,6 +924,33 @@ socket.on("newRound", cb => {
     resetRound(room);
     cb({ ok: true });
     sendState(room);
+  });
+
+  socket.on("leaveGame", (cb) => {
+    const room = [...rooms.values()].find(r => r.players.has(socket.id));
+
+    if (!room) {
+      if (cb) cb({ ok: true });
+      return;
+    }
+
+    const wasHost = room.hostId === socket.id;
+
+    room.players.delete(socket.id);
+
+    // ถ้าคนที่ออกเป็น HOST ให้ส่ง HOST ต่อให้คนถัดไป
+    if (wasHost && room.players.size > 0) {
+      room.hostId = room.players.values().next().value.id;
+    }
+
+    // ถ้าไม่มีผู้เล่นเหลือแล้ว ลบห้อง
+    if (room.players.size === 0) {
+      rooms.delete(room.code);
+    } else {
+      sendState(room);
+    }
+
+    if (cb) cb({ ok: true });
   });
 
   socket.on("disconnect", () => {

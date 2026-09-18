@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Werewolf Online</title>
-  <link rel="stylesheet" href="/style.css?v=20">
+  <link rel="stylesheet" href="/style.css?v=17">
 </head>
 <body>
   <div id="app">
@@ -51,6 +51,10 @@
     <section id="game" class="screen hidden game-screen">
       <header>
         <div><b id="phaseTitle">NIGHT</b> <span id="nightNo"></span></div>
+      <div class="game-top-actions">
+        <button type="button" class="top-icon-btn" onclick="location.reload()" title="Refresh">🔄</button>
+        <button type="button" class="top-icon-btn exit-btn" onclick="leaveGame()" title="ออกจากเกม">🚪</button>
+      </div>
         <button id="newRoundBtn" class="hidden">🔄 เล่นรอบใหม่</button>
       </header>
       <main class="gamegrid new-game-layout">
@@ -71,6 +75,6 @@
     </section>
   </div>
 <script src="/socket.io/socket.io.js"></script>
-<script src="/app.js?v=100"></script>
+<script src="/app.js?v=17"></script>
 </body>
 </html>

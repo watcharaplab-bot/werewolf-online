@@ -604,7 +604,7 @@
     font-size: 11px;
   }
 }
-#deathPopup,#gameOverPopup{
+#deathPopup,#gameOverPopup,#noDeathPopup{
  position:fixed;inset:0;z-index:99999;
  background:#000c;display:flex;
  align-items:center;justify-content:center;
@@ -620,3 +620,41 @@
  padding:10px 30px;border:0;
  border-radius:10px;font-size:16px
 }
+
+/* ===== GAME TOP BUTTONS ===== */
+#game > header{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+}
+
+.game-top-actions{
+  display:flex;
+  align-items:center;
+  gap:6px;
+  margin-left:auto;
+}
+
+.top-icon-btn{
+  width:38px;
+  height:38px;
+  min-width:38px;
+  padding:0;
+  border:0;
+  border-radius:10px;
+  font-size:20px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  cursor:pointer;
+}
+
+.exit-btn{
+  font-size:19px;
+}
+
+#newRoundBtn.hidden{
+  display:none;
+}
+
