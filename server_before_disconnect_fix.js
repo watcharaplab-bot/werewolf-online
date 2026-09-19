@@ -421,6 +421,7 @@ function resolveNight(room) {
     const b = aliveById(room, room.actions[cupid.id].b);
     if (a && b && a.id !== b.id) {
       room.lovers = [a.id, b.id];
+      notes.push("💘 กามเทพได้ผูกคู่รัก 2 คนแล้ว");
     }
   }
 
@@ -478,6 +479,7 @@ function resolveNight(room) {
     if (target !== guardTarget) {
       kills.add(target);
     } else {
+      notes.push("🛡️ ผู้คุ้มกันช่วยปกป้องเหยื่อไว้ได้");
     }
   }
 
@@ -489,6 +491,7 @@ function resolveNight(room) {
       if (t && t.id !== p.id) {
         kills.add(t.id);
         room.huntressUsed.add(p.id);
+        notes.push("🏹 พรานหญิงใช้ความสามารถแล้ว");
       }
     }
   }
@@ -1350,14 +1353,6 @@ socket.on("globalChatGet", (cb) => {
 
         // ถ้ายังเป็นผู้เล่นคนเดิมและยังไม่ได้ reconnect ให้ลบหลัง 3 นาที
         if (r.players.has(oldSocketId)) {
-        const disconnectedPendingHunter =
-          r.phase === "hunter" &&
-          r.pendingHunter === oldSocketId;
-
-        if (disconnectedPendingHunter) {
-          r.pendingHunter = null;
-        }
-
           r.players.delete(oldSocketId);
 
           if (r.hostId === oldSocketId) {

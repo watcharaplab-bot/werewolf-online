@@ -26,7 +26,15 @@
     </section>
 
     <section id="lobby" class="screen hidden">
-      <header><div><b>ROOM</b> <strong id="room"></strong></div><button id="copyBtn">คัดลอก Code</button></header>
+      <header>
+  <div><b>ROOM</b> <strong id="room"></strong></div>
+
+  <div class="game-top-actions">
+    <button id="copyBtn">คัดลอก Code</button>
+    <button type="button" class="top-icon-btn" onclick="location.reload()" title="Refresh">🔄</button>
+    <button type="button" class="top-icon-btn exit-btn" onclick="leaveGame()" title="ออกจากห้อง">🚪</button>
+  </div>
+</header>
       <main class="grid">
         <div class="card">
           <h2>ผู้เล่น <span id="playerCount"></span>/15</h2>
@@ -71,7 +79,19 @@
           <div id="actions"></div>
           <div id="gameMsg" class="msg"></div>
         </div>
-          <div id="wolfChatCard" class="card wolf-chat-card hidden">
+          <!-- ===== GLOBAL CHAT ===== -->
+    <div id="globalChatCard" class="card wolf-chat-card">
+      <h2>💬 แชทผู้เล่น</h2>
+      <div id="globalChatMessages" class="wolf-chat-messages"></div>
+      <div class="wolf-chat-input-row">
+        <input id="globalChatInput" maxlength="300" placeholder="พิมพ์ข้อความ...">
+        <button id="globalChatSendBtn" type="button">ส่ง</button>
+      </div>
+      <div id="globalChatMsg" class="msg"></div>
+    </div>
+
+    <!-- ===== WOLF CHAT ===== -->
+    <div id="wolfChatCard" class="card wolf-chat-card hidden">
       <h2>🐺 แชทหมาป่า</h2>
       <div id="wolfChatMessages" class="wolf-chat-messages"></div>
       <div class="wolf-chat-input-row">
@@ -84,10 +104,28 @@
     </section>
   </div>
 <script src="/socket.io/socket.io.js"></script>
-<script src="/app.js?v=16"></script>
+<script src="/app.js?v=17"></script>
 
 <!-- GAME BACKGROUND MUSIC -->
 <audio id="gameBgm" loop preload="auto"></audio>
+
+
+<!-- ===== DAY / NIGHT PHASE POPUP ===== -->
+<div id="phasePopup" class="phase-popup hidden">
+  <div class="phase-popup-box">
+    <img id="phasePopupImg" src="" alt="">
+    <div id="phasePopupTitle"></div>
+  </div>
+</div>
+
+<audio id="wolfHowlSound" preload="auto">
+  <source src="/sounds/wolf-howl.mp3" type="audio/mpeg">
+</audio>
+
+<audio id="roosterSound" preload="auto">
+  <source src="/sounds/rooster.mp3" type="audio/mpeg">
+</audio>
+<!-- ===== END PHASE POPUP ===== -->
 
 </body>
 </html>

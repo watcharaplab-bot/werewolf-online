@@ -242,7 +242,7 @@ function checkWinner(room) {
 
 function startMemorial(room, deadIds) {
   room.memorialDeaths = deadIds.map(id => room.players.get(id)?.name).filter(Boolean);
-  room.memorialEndsAt = Date.now() + 5000;
+  room.memorialEndsAt = Date.now() + 20000;
 }
 function kill(room, id, reason = "") {
   const p = room.players.get(id);
@@ -292,9 +292,6 @@ function resetRound(room) {
   room.direCompanion = null; room.wolfCubBonus = false;
   room.diseasedBlocked = false; room.huntressUsed = new Set();
   room.afterHunterPhase = null;
-  room.memorialDeaths = [];
-  room.memorialEndsAt = null;
-  room.afterMemorialPhase = null;
   room.lastGuardTarget = null; room.winner = null; room.message = "";
   for (const p of room.players.values()) {
     p.alive = true; p.role = null; p.trueRole = null; p.tannerWon = false;
@@ -399,7 +396,7 @@ function availableActions(room, p) {
     p.role === "Huntress" &&
     !room.huntressUsed.has(p.id)
   )
-    actions.push("huntress", "huntressSkip");
+    actions.push("huntress");
 
   if (
     p.role === "DireWolf" &&
@@ -421,6 +418,7 @@ function resolveNight(room) {
     const b = aliveById(room, room.actions[cupid.id].b);
     if (a && b && a.id !== b.id) {
       room.lovers = [a.id, b.id];
+      notes.push("💘 กามเทพได้ผูกคู่รัก 2 คนแล้ว");
     }
   }
 
@@ -478,6 +476,7 @@ function resolveNight(room) {
     if (target !== guardTarget) {
       kills.add(target);
     } else {
+      notes.push("🛡️ ผู้คุ้มกันช่วยปกป้องเหยื่อไว้ได้");
     }
   }
 
@@ -489,6 +488,7 @@ function resolveNight(room) {
       if (t && t.id !== p.id) {
         kills.add(t.id);
         room.huntressUsed.add(p.id);
+        notes.push("🏹 พรานหญิงใช้ความสามารถแล้ว");
       }
     }
   }
@@ -500,7 +500,7 @@ function resolveNight(room) {
     const beforeRole = p.role;
     const newlyDead = kill(room, id, "Night");
     room.deaths.push(...newlyDead);
-  if (diseasedWolfTarget && wolfTargets.some(id => room.players.get(id)?.role === "Diseased" && kills.has(id))) room.diseasedBlocked = true;
+  if (diseasedWolfTarget && wolfTargets.some(id => kills.has(id))) room.diseasedBlocked = true;
   }
 
 
@@ -719,38 +719,6 @@ io.on("connection", socket => {
       room.players.set(socket.id, oldPlayer);
     room.lovers = (room.lovers || []).map(id => id === oldId ? socket.id : id);
 
-// Reconnect: ย้าย reference จาก Socket ID เก่า -> Socket ID ใหม่
-if (room.pendingHunter === oldId) room.pendingHunter = socket.id;
-if (room.direCompanion === oldId) room.direCompanion = socket.id;
-if (room.lastGuardTarget === oldId) room.lastGuardTarget = socket.id;
-
-if (room.actions && Object.prototype.hasOwnProperty.call(room.actions, oldId)) {
-  room.actions[socket.id] = room.actions[oldId];
-  delete room.actions[oldId];
-}
-
-if (room.votes && Object.prototype.hasOwnProperty.call(room.votes, oldId)) {
-  room.votes[socket.id] = room.votes[oldId];
-  delete room.votes[oldId];
-}
-
-// target ที่เก็บอยู่ใน action/vote ก็ต้องเปลี่ยน ID ด้วย
-for (const action of Object.values(room.actions || {})) {
-  if (!action) continue;
-  if (action.target === oldId) action.target = socket.id;
-  if (action.a === oldId) action.a = socket.id;
-  if (action.b === oldId) action.b = socket.id;
-}
-
-for (const voterId of Object.keys(room.votes || {})) {
-  if (room.votes[voterId] === oldId) room.votes[voterId] = socket.id;
-}
-
-if (room.huntressUsed?.has(oldId)) {
-  room.huntressUsed.delete(oldId);
-  room.huntressUsed.add(socket.id);
-}
-
       // ถ้าคนที่กลับมาเป็น HOST ให้คืน HOST
       if (room.hostId === oldId) {
         room.hostId = socket.id;
@@ -829,21 +797,7 @@ if (room.huntressUsed?.has(oldId)) {
     const allowed = availableActions(room, p);
     if (!allowed.includes(type)) return cb({ error: "คุณไม่มีความสามารถนี้ในตอนนี้" });
 
-    if (type === "huntressSkip") {
-    if (p.role !== "Huntress")
-      return cb({ error: "เฉพาะพรานหญิงเท่านั้น" });
-
-    room.actions[p.id] = { type: "huntressSkip" };
-
-    cb({ ok: true });
-
-    if (allNightActionsDone(room)) resolveNight(room);
-    else sendState(room);
-
-    return;
-  }
-
-  if (type === "cupid") {
+    if (type === "cupid") {
       if (a === b) return cb({ error: "ต้องเลือกคนละ 2 คน" });
       if (!aliveById(room,a) || !aliveById(room,b)) return cb({ error: "เป้าหมายไม่ถูกต้อง" });
   // WolfCub Bonus: คืนถัดไปหมาป่าเลือกฆ่า 2 คน
@@ -941,6 +895,10 @@ if (room.huntressUsed?.has(oldId)) {
         target: t.name,
         isWolf: isWolf(seen)
       });
+    }
+
+    if (type === "huntress") {
+      room.huntressUsed.add(p.id);
     }
 
     cb({ ok: true });
@@ -1350,14 +1308,6 @@ socket.on("globalChatGet", (cb) => {
 
         // ถ้ายังเป็นผู้เล่นคนเดิมและยังไม่ได้ reconnect ให้ลบหลัง 3 นาที
         if (r.players.has(oldSocketId)) {
-        const disconnectedPendingHunter =
-          r.phase === "hunter" &&
-          r.pendingHunter === oldSocketId;
-
-        if (disconnectedPendingHunter) {
-          r.pendingHunter = null;
-        }
-
           r.players.delete(oldSocketId);
 
           if (r.hostId === oldSocketId) {

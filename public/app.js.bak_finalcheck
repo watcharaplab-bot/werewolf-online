@@ -87,36 +87,7 @@ document.addEventListener("pointerdown", ()=>{
 }, {passive:true});
 
 socket.on("state",s=>{
-  const previousPhase = state?.phase || null;
-  const previousNight = state?.night || 0;
-
   state=s; me=s.me;
-
-  // ===== DAY / NIGHT PHASE POPUP TRIGGER =====
-  if (s.started) {
-    const phaseKey = s.phase === "night"
-      ? `night-${s.night || 0}`
-      : s.phase === "day"
-        ? `day-${s.night || 0}`
-        : null;
-
-    if (
-      phaseKey &&
-      phaseKey !== lastPhasePopupKey &&
-      (s.phase !== previousPhase || s.night !== previousNight)
-    ) {
-      lastPhasePopupKey = phaseKey;
-      showPhasePopup(s.phase);
-    }
-  }
-  // ===== END PHASE POPUP TRIGGER =====
-
-  // GAME OVER ต้องแสดงผลทันที
-  if (s.phase === "gameover") {
-    show("game");
-    setTimeout(() => renderGameOver(), 100);
-    return;
-  }
 
   // ===== GLOBAL CHAT : คนตายอ่านได้ แต่พิมพ์ไม่ได้ =====
   const globalChatInput = $("globalChatInput");
@@ -209,23 +180,20 @@ $("startBtn").onclick=()=>{
 };
 
 function closeDeathPopup(){
-  // ปิด Popup ผู้เสียชีวิตก่อน
   document.getElementById("deathPopup")?.remove();
 
-  // HOST ค่อยแจ้ง Server หลัง Popup เดิมปิดสนิท
+  // ถ้า HOST ปิด Memorial เอง ให้เกมเดินต่อทันที
+  // เช่น Hunter ถูกประหาร -> เข้าหน้า Hunter ยิง
   if(state?.phase==="memorial" && state?.hostId===me?.id){
-    setTimeout(()=>{
-      socket.emit("continueMemorial", r=>{
-        if(r && r.error){
-          console.error("MEMORIAL CONTINUE ERROR:",r.error);
-        }
-      });
-    },500);
+    socket.emit("continueMemorial", r=>{
+      if(r && r.error){
+        console.error("MEMORIAL CONTINUE ERROR:",r.error);
+      }
+    });
   }
 }
 
 function showDeathPopup(names){
-  document.getElementById("deathPopup")?.remove();
  let d=document.createElement("div");
  d.id="deathPopup";
  d.innerHTML=`<div class="deathBox">🕯️<h2>${names.join("<br>")}</h2><b>ได้เสียชีวิตแล้ว</b><p>โปรดไว้อาลัยแด่ผู้เสียชีวิต</p><p id="deathTime">ปิดอัตโนมัติใน 10 วินาที</p><button onclick="closeDeathPopup()">ปิด</button></div>`;
@@ -347,7 +315,7 @@ function renderGame(){
       <div class="myrole">
         <div class="roleImageWrap"><img class="roleImage" src="${roleImages[me.role] || ''}" alt="${roles[me.role]?.[1] || me.role}"></div>
       <div class="rolePlayerName">👤 ${me.name}</div>
-        <div class="roleTitle">${roles[me.role]?.[1] || me.role}${me.wasDrunk && me.role !== "Drunk" ? " (Drunk)" : ""}</div>
+        <div class="roleTitle">${roles[me.role]?.[1]||me.role}</div>
         <div class="faction">${me.faction}</div>
         ${me.role==="Drunk"&&state.night<2
           ? '<div class="notice">🍺 คุณยังไม่รู้บทที่แท้จริงจนกว่าจะถึงคืนที่ 2</div>'
@@ -462,7 +430,6 @@ function renderNight(){
     $("actions").innerHTML='<div class="notice">💘 เลือกคู่รัก 2 คน</div><div id="cup"></div><button class="primary full" onclick="submitCupid()">ยืนยันคู่รัก</button>';
     window.cupA=null;window.cupB=null;
     $("cup").innerHTML=candidates().map(p=>`<button class="target" id="cup-${p.id}" onclick="pickCup('${p.id}')">${p.name}</button>`).join("");return;
-}
 if(me.role==="DireWolf" && state.night===1 && !state.direCompanion){
   $("actionTitle").textContent="🐺 เลือก Companion";
   setupPlayerCardSelection("companion","เลือก Companion จากรายชื่อผู้เล่น","✓ ยืนยัน Companion");
@@ -598,17 +565,7 @@ function renderHunter(){
 
 window.shoot=id=>socket.emit("hunterShot",{target:id},r=>{if(!r.ok)alert(r.error)});
 
-function escapeHtml(value){
-  return String(value ?? "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#039;");
-}
-
 function renderGameOver(){
-  console.log("GAMEOVER DEBUG:", {phase: state.phase, winner: state.winner, gameSummary: state.gameSummary});
   const actionCard=document.getElementById("actionCard");
   if(actionCard) actionCard.style.display="none";
 
@@ -1045,65 +1002,3 @@ function loadGlobalChatHistory() {
     (res.messages || []).forEach(addGlobalChatMessage);
   });
 }
-
-// ===== DAY / NIGHT PHASE POPUP =====
-let lastPhasePopupKey = null;
-let phasePopupTimer = null;
-
-function showPhasePopup(type, phaseNo = "") {
-  const popup = document.getElementById("phasePopup");
-  const img = document.getElementById("phasePopupImg");
-  const title = document.getElementById("phasePopupTitle");
-
-  if (!popup || !img || !title) return;
-
-  const isNight = type === "night";
-
-  img.src = isNight
-    ? "/phase/night.png"
-    : "/phase/day.png";
-
-  title.textContent = isNight
-    ? "🌙 ราตรีมาเยือน"
-    : "☀️ อรุณรุ่งมาเยือน";
-
-  const sound = document.getElementById(
-    isNight ? "wolfHowlSound" : "roosterSound"
-  );
-
-  // ปิดเสียงอีกฝั่งก่อน
-  ["wolfHowlSound", "roosterSound"].forEach(id => {
-    const a = document.getElementById(id);
-    if (a) {
-      a.pause();
-      a.currentTime = 0;
-    }
-  });
-
-  popup.classList.remove("hidden");
-
-  if (sound) {
-    sound.currentTime = 0;
-    sound.play().catch(err => {
-      console.log("PHASE SOUND:", err);
-    });
-  }
-
-  clearTimeout(phasePopupTimer);
-
-  phasePopupTimer = setTimeout(() => {
-    popup.classList.add("hidden");
-
-    if (sound) {
-      sound.pause();
-      sound.currentTime = 0;
-    }
-  }, 5000);
-}
-
-// ใช้ทดสอบจาก Console
-window.testNightPopup = () => showPhasePopup("night");
-window.testDayPopup = () => showPhasePopup("day");
-
-// ===== END DAY / NIGHT PHASE POPUP =====
-

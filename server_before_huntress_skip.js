@@ -399,7 +399,7 @@ function availableActions(room, p) {
     p.role === "Huntress" &&
     !room.huntressUsed.has(p.id)
   )
-    actions.push("huntress", "huntressSkip");
+    actions.push("huntress");
 
   if (
     p.role === "DireWolf" &&
@@ -421,6 +421,7 @@ function resolveNight(room) {
     const b = aliveById(room, room.actions[cupid.id].b);
     if (a && b && a.id !== b.id) {
       room.lovers = [a.id, b.id];
+      notes.push("💘 กามเทพได้ผูกคู่รัก 2 คนแล้ว");
     }
   }
 
@@ -478,6 +479,7 @@ function resolveNight(room) {
     if (target !== guardTarget) {
       kills.add(target);
     } else {
+      notes.push("🛡️ ผู้คุ้มกันช่วยปกป้องเหยื่อไว้ได้");
     }
   }
 
@@ -489,6 +491,7 @@ function resolveNight(room) {
       if (t && t.id !== p.id) {
         kills.add(t.id);
         room.huntressUsed.add(p.id);
+        notes.push("🏹 พรานหญิงใช้ความสามารถแล้ว");
       }
     }
   }
@@ -829,21 +832,7 @@ if (room.huntressUsed?.has(oldId)) {
     const allowed = availableActions(room, p);
     if (!allowed.includes(type)) return cb({ error: "คุณไม่มีความสามารถนี้ในตอนนี้" });
 
-    if (type === "huntressSkip") {
-    if (p.role !== "Huntress")
-      return cb({ error: "เฉพาะพรานหญิงเท่านั้น" });
-
-    room.actions[p.id] = { type: "huntressSkip" };
-
-    cb({ ok: true });
-
-    if (allNightActionsDone(room)) resolveNight(room);
-    else sendState(room);
-
-    return;
-  }
-
-  if (type === "cupid") {
+    if (type === "cupid") {
       if (a === b) return cb({ error: "ต้องเลือกคนละ 2 คน" });
       if (!aliveById(room,a) || !aliveById(room,b)) return cb({ error: "เป้าหมายไม่ถูกต้อง" });
   // WolfCub Bonus: คืนถัดไปหมาป่าเลือกฆ่า 2 คน
@@ -1350,14 +1339,6 @@ socket.on("globalChatGet", (cb) => {
 
         // ถ้ายังเป็นผู้เล่นคนเดิมและยังไม่ได้ reconnect ให้ลบหลัง 3 นาที
         if (r.players.has(oldSocketId)) {
-        const disconnectedPendingHunter =
-          r.phase === "hunter" &&
-          r.pendingHunter === oldSocketId;
-
-        if (disconnectedPendingHunter) {
-          r.pendingHunter = null;
-        }
-
           r.players.delete(oldSocketId);
 
           if (r.hostId === oldSocketId) {
