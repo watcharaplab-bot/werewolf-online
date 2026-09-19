@@ -771,3 +771,34 @@
   to   { transform: scale(1); }
 }
 
+
+/* DAY / NIGHT POPUP COUNTDOWN */
+#phasePopupCountdown {
+  position: absolute;
+  left: 50%;
+  bottom: 18%;
+  transform: translateX(-50%);
+  z-index: 10;
+
+  font-size: clamp(52px, 14vw, 110px);
+  font-weight: 900;
+  line-height: 1;
+  color: white;
+
+  text-shadow:
+    0 4px 10px #000,
+    0 0 20px #000,
+    0 0 35px #000;
+
+  pointer-events: none;
+}
+
+.phase-popup:not(.hidden) #phasePopupCountdown {
+  animation: phaseCountdownPulse 1s ease-in-out infinite;
+}
+
+@keyframes phaseCountdownPulse {
+  0%   { transform: translateX(-50%) scale(1); }
+  50%  { transform: translateX(-50%) scale(1.18); }
+  100% { transform: translateX(-50%) scale(1); }
+}

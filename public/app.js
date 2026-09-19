@@ -111,7 +111,12 @@ socket.on("state",s=>{
   }
   // ===== END PHASE POPUP TRIGGER =====
 
-  // GAME OVER ต้องแสดงผลทันที
+  // ถ้าเริ่มรอบใหม่ ให้ปิดหน้าสรุปเกมเก่าของผู้เล่นทุกคน
+if (s.phase !== "gameover") {
+  document.getElementById("gameOverPopup")?.remove();
+}
+
+// GAME OVER ต้องแสดงผลทันที
   if (s.phase === "gameover") {
     show("game");
     setTimeout(() => renderGameOver(), 100);
@@ -228,9 +233,9 @@ function showDeathPopup(names){
   document.getElementById("deathPopup")?.remove();
  let d=document.createElement("div");
  d.id="deathPopup";
- d.innerHTML=`<div class="deathBox">🕯️<h2>${names.join("<br>")}</h2><b>ได้เสียชีวิตแล้ว</b><p>โปรดไว้อาลัยแด่ผู้เสียชีวิต</p><p id="deathTime">ปิดอัตโนมัติใน 10 วินาที</p><button onclick="closeDeathPopup()">ปิด</button></div>`;
+ d.innerHTML=`<div class="deathBox">🕯️<h2>${names.join("<br>")}</h2><b>ได้เสียชีวิตแล้ว</b><p>โปรดไว้อาลัยแด่ผู้เสียชีวิต</p><p id="deathTime">ปิดอัตโนมัติใน 5 วินาที</p><button onclick="closeDeathPopup()">ปิด</button></div>`;
  document.body.appendChild(d);
- let t=10;
+ let t=5;
  let x=setInterval(()=>{
   t--;
   let e=document.getElementById("deathTime");
@@ -1054,24 +1059,20 @@ function showPhasePopup(type, phaseNo = "") {
   const popup = document.getElementById("phasePopup");
   const img = document.getElementById("phasePopupImg");
   const title = document.getElementById("phasePopupTitle");
+  const countdown = document.getElementById("phasePopupCountdown");
 
   if (!popup || !img || !title) return;
 
   const isNight = type === "night";
 
-  img.src = isNight
-    ? "/phase/night.png"
-    : "/phase/day.png";
-
-  title.textContent = isNight
-    ? "🌙 ราตรีมาเยือน"
-    : "☀️ อรุณรุ่งมาเยือน";
+  img.src = isNight ? "/phase/night.png" : "/phase/day.png";
+  title.textContent = isNight ? "🌙 ราตรีมาเยือน" : "🌅 อรุณรุ่งมาเยือน";
 
   const sound = document.getElementById(
     isNight ? "wolfHowlSound" : "roosterSound"
   );
 
-  // ปิดเสียงอีกฝั่งก่อน
+  // หยุดเสียงของ Phase ก่อนหน้า ก่อนเริ่มเสียงใหม่
   ["wolfHowlSound", "roosterSound"].forEach(id => {
     const a = document.getElementById(id);
     if (a) {
@@ -1082,6 +1083,10 @@ function showPhasePopup(type, phaseNo = "") {
 
   popup.classList.remove("hidden");
 
+  // Countdown 5 → 4 → 3 → 2 → 1
+  let remaining = 5;
+  if (countdown) countdown.textContent = remaining;
+
   if (sound) {
     sound.currentTime = 0;
     sound.play().catch(err => {
@@ -1091,13 +1096,21 @@ function showPhasePopup(type, phaseNo = "") {
 
   clearTimeout(phasePopupTimer);
 
+  const countdownTimer = setInterval(() => {
+    remaining--;
+
+    if (remaining >= 1) {
+      if (countdown) countdown.textContent = remaining;
+    } else {
+      clearInterval(countdownTimer);
+    }
+  }, 1000);
+
   phasePopupTimer = setTimeout(() => {
+    clearInterval(countdownTimer);
     popup.classList.add("hidden");
 
-    if (sound) {
-      sound.pause();
-      sound.currentTime = 0;
-    }
+    // ไม่หยุดเสียงตรงนี้ ปล่อยให้เสียงเล่นจนจบเอง
   }, 5000);
 }
 
