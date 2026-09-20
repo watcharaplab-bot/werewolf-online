@@ -873,13 +873,7 @@ if (room.huntressUsed?.has(oldId)) {
       return cb({ error: "เป้าหมายไม่ถูกต้อง" });
     }
 
-    const isWolfTarget = x => isWolf(x.role);
-
-    if (isWolfTarget(ta) || isWolfTarget(tb)) {
-      return cb({ error: "หมาป่าเลือกฆ่าสมาชิกทีมหมาป่าด้วยกันไม่ได้" });
-    }
-
-    room.actions[p.id] = { type, a, b };
+room.actions[p.id] = { type, a, b };
 
     cb({ ok: true });
 

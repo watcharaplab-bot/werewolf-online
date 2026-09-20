@@ -516,16 +516,15 @@ function renderNight(){
     $("actions").innerHTML='<div class="notice">คืนนี้คุณไม่มี Action ที่ต้องทำ</div>';return;
   }
   if(me.role==="Cupid"&&state.night===1){
-    if((state.cupidLovers||[]).length===2){
-      $("actions").innerHTML='<div class="notice">💘 เลือกคู่รักเรียบร้อยแล้ว</div>';
-      return;
-    }
-
-    setupCupidCardSelection();
-    return;
-  }
-
-  if(me.role==="DireWolf" && state.night===1 && !state.direCompanion){
+      if((state.cupidLovers||[]).length===2){
+        $("actions").innerHTML='<div class="notice">💘 เลือกคู่รักเรียบร้อยแล้ว</div>';
+        return;
+      }
+    $("actions").innerHTML='<div class="notice">💘 เลือกคู่รัก 2 คน</div><div id="cup"></div><button class="primary full" onclick="submitCupid()">ยืนยันคู่รัก</button>';
+    window.cupA=null;window.cupB=null;
+    $("cup").innerHTML=candidates().map(p=>`<button class="target" id="cup-${p.id}" onclick="pickCup('${p.id}')">${p.name}</button>`).join("");return;
+}
+if(me.role==="DireWolf" && state.night===1 && !state.direCompanion){
   $("actionTitle").textContent="🐺 เลือก Companion";
   setupPlayerCardSelection("companion","เลือก Companion จากรายชื่อผู้เล่น","✓ ยืนยัน Companion");
   return;
@@ -856,81 +855,6 @@ window.continueMemorial=()=>{
 
 window.selectedPlayerId = null;
 window.playerCardAction = null;
-
-
-/* ===== CUPID : SELECT 2 PLAYERS FROM PLAYER CARDS ===== */
-window.setupCupidCardSelection = function() {
-  window.cupidSelectedIds = [];
-
-  const aliveIds = state.players
-    .filter(p => p.alive)
-    .map(p => p.id);
-
-  document.querySelectorAll("#gamePlayers .player").forEach((card, index) => {
-    const p = state.players[index];
-
-    card.classList.remove("selectable-player", "selected-player");
-    card.onclick = null;
-    card.title = "";
-
-    if (!p || !aliveIds.includes(p.id)) return;
-
-    card.classList.add("selectable-player");
-
-    card.onclick = () => {
-      const id = p.id;
-      const pos = window.cupidSelectedIds.indexOf(id);
-
-      if (pos >= 0) {
-        window.cupidSelectedIds.splice(pos, 1);
-        card.classList.remove("selected-player");
-      } else {
-        if (window.cupidSelectedIds.length >= 2) return;
-
-        window.cupidSelectedIds.push(id);
-        card.classList.add("selected-player");
-      }
-
-      const selected = window.cupidSelectedIds
-        .map(x => state.players.find(z => z.id === x))
-        .filter(Boolean);
-
-      if (selected.length === 0) {
-        $("actions").innerHTML =
-          '<div class="notice player-select-help">💘 เลือกผู้เล่น 2 คนให้เป็นคู่รัก</div>';
-      } else if (selected.length === 1) {
-        $("actions").innerHTML =
-          '<div class="selected-summary">💘 คนที่ 1: <b>' +
-          escapeHtml(selected[0].name) +
-          '</b><br>เลือกคนที่ 2</div>';
-      } else {
-        $("actions").innerHTML =
-          '<div class="selected-summary">💘 คู่รักที่เลือก<br><b>' +
-          escapeHtml(selected[0].name) + ' ❤️ ' +
-          escapeHtml(selected[1].name) +
-          '</b></div>' +
-          '<button class="primary full" onclick="confirmCupidCardSelection()">💘 ยืนยันคู่รัก</button>';
-      }
-    };
-  });
-
-  $("actions").innerHTML =
-    '<div class="notice player-select-help">💘 เลือกผู้เล่น 2 คนให้เป็นคู่รัก</div>';
-};
-
-window.confirmCupidCardSelection = function() {
-  const ids = window.cupidSelectedIds || [];
-
-  if (ids.length !== 2) {
-    return alert("กรุณาเลือกผู้เล่นให้ครบ 2 คน");
-  }
-
-  const a = ids[0];
-  const b = ids[1];
-
-  window.cupidSelectedIds = [];
-  act("cupid", {a, b});
-};
 
 window.setupPlayerCardSelection = function(actionType, title, confirmText) {
   window.selectedPlayerId = null;
