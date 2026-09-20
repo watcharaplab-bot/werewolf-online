@@ -230,13 +230,6 @@ function checkWinner(room) {
   const alivePlayers = [...room.players.values()].filter(p => p.alive);
   const village = alivePlayers.filter(p => ROLE_INFO[p.role]?.faction === "Village").length;
   const wolves = alivePlayers.filter(p => isWolf(p.role)).length;
-
-  // ไม่มีผู้เล่นรอดชีวิตเลย = เสมอ
-  if (alivePlayers.length === 0) {
-    room.winner = "Draw";
-    return true;
-  }
-
   if (alivePlayers.some(p => p.role === "Tanner" && p.tannerWon)) {
     room.winner = "Tanner";
   } else if (wolves === 0) {
@@ -531,20 +524,13 @@ function resolveNight(room) {
     room.winner = null;
     room.phase = "hunter";
     room.message = "🏹 นายพรานเสียชีวิต - เลือกคนที่จะยิง";
-} else if (!room.pendingHunter) {
-  // ไม่มีผู้เสียชีวิต: รอ Popup 5 วิ + เว้น 1 วิ
-  room.message = "";
-
-  setTimeout(() => {
-    if (room.phase !== "night") return;
-
+  } else if (!room.pendingHunter) {
     room.phase = "day";
     room.votes = {};
     room.dayEndsAt = null;
-    room.message = "☀️ เช้าวันใหม่ – โปรดพูดคุยและโหวต";
-    sendState(room);
-  }, 6000);
-}
+
+    room.message = notes.join("\n") || "☀️ เช้าวันใหม่ — โปรดพูดคุยและโหวต";
+  }
   sendState(room);
   broadcast(room, "nightResult", {
     phase: room.phase, deaths: room.deaths.slice(-10),
@@ -1170,12 +1156,7 @@ socket.on("continueMemorial", cb => {
     return cb({ error: "ตอนนี้ไม่ได้อยู่ในช่วงไว้อาลัย" });
 
   cb({ ok: true });
-
-  // Popup ผู้เสียชีวิตจบแล้ว เว้น 1 วิ ก่อนเข้า Phase ถัดไป
-  setTimeout(() => {
-    if (room.phase !== "memorial") return;
-    afterNightMemorial(room);
-  }, 0);
+  afterNightMemorial(room);
 });
 
 socket.on("newRound", cb => {

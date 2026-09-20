@@ -87,7 +87,7 @@ function updateGameMusic(s){
       bgm.volume = 0.45;
       bgm.play().catch(()=>{});
       gameMusicDelayTimer = null;
-    }, 0);
+    }, s.phase === "night" ? 15000 : 8000);
 
     return;
   }
@@ -116,12 +116,6 @@ socket.on("state",s=>{
   const previousNight = state?.night || 0;
 
   state=s; me=s.me;
-
-  // กลับ Lobby / เริ่มรอบใหม่ -> รีเซ็ต Popup Phase
-  // เพื่อให้ Night 1 ของเกมรอบใหม่แสดง Popup อีกครั้ง
-  if (!s.started || s.phase === "lobby") {
-    lastPhasePopupKey = null;
-  }
 
   // ===== DAY / NIGHT PHASE POPUP TRIGGER =====
   if (s.started) {
@@ -271,17 +265,12 @@ function closeDeathPopup(){
           console.error("MEMORIAL CONTINUE ERROR:",r.error);
         }
       });
-    },0);
+    },500);
   }
 }
 
 function showDeathPopup(names){
   document.getElementById("deathPopup")?.remove();
-
-  // เสียงประกาศผู้เสียชีวิต
-  const deathSound = new Audio("/sounds/death-bell.mp3");
-  deathSound.volume = 0.8;
-  deathSound.play().catch(()=>{});
  let d=document.createElement("div");
  d.id="deathPopup";
  d.innerHTML=`<div class="deathBox">🕯️<h2>${names.join("<br>")}</h2><b>ได้เสียชีวิตแล้ว</b><p>โปรดไว้อาลัยแด่ผู้เสียชีวิต</p><p id="deathTime">ปิดอัตโนมัติใน 5 วินาที</p><button onclick="closeDeathPopup()">ปิด</button></div>`;
@@ -313,11 +302,6 @@ function showDeathPopup(names){
 
 function showNoDeathPopup(type){
   document.getElementById("noDeathPopup")?.remove();
-
-  // เสียงประกาศไม่มีผู้เสียชีวิต
-  const noDeathSound = new Audio("/sounds/death-bell.mp3");
-  noDeathSound.volume = 0.8;
-  noDeathSound.play().catch(()=>{});
 
   const isNight = type === "night";
   const icon = isNight ? "🌙" : "🗳️";
@@ -676,8 +660,7 @@ function renderGameOver(){
   const map={
     Village:"🏆 ฝ่ายชาวบ้านชนะ",
     Werewolf:"🐺 ฝ่ายหมาป่าชนะ",
-    Tanner:"🤡 ยาจกชนะทันที",
-    Draw:"🤝 เสมอกัน — ไม่มีผู้รอดชีวิตทั้ง 2 ฝ่าย",
+    Tanner:"🤡 ยาจกชนะทันที"
   };
 
   $("actionTitle").textContent="";
@@ -1141,14 +1124,6 @@ function showPhasePopup(type, phaseNo = "") {
     }
   });
 
-  // หยุดเพลง BGM เดิมก่อนเล่นเสียง Popup
-  const bgm = document.getElementById("gameBgm");
-  if (bgm) {
-    bgm.pause();
-    bgm.currentTime = 0;
-  }
-  currentGameMusic = "";
-
   popup.classList.remove("hidden");
 
   // Countdown 5 → 4 → 3 → 2 → 1
@@ -1156,48 +1131,38 @@ function showPhasePopup(type, phaseNo = "") {
   if (countdown) countdown.textContent = remaining;
 
   if (sound) {
-    // ล็อกเพลงพื้นหลังไว้จนกว่าเสียง Popup จะเล่นครบทุกครั้ง
+    // ล็อกเพลงพื้นหลังทันที ให้เสียง Popup เล่นจนจบก่อน
     phasePopupSoundActive = true;
 
-    const soundFile = isNight
-      ? "/sounds/wolf-howl.mp3"
-      : "/sounds/rooster.mp3";
+    sound.currentTime = 0;
 
-    // กลางคืน 2 รอบ / กลางวัน 3 รอบ
-    const totalPlays = isNight ? 2 : 3;
-    let playNo = 0;
+    let popupPlayCount = 1;
 
-    function playPopupSound() {
-      playNo++;
+    sound.onended = () => {
+      // กลางคืน: เล่นเสียงหมาป่าซ้ำให้ครบ 2 รอบ
+      // กลางคืนเล่น 2 รอบ / กลางวันเล่น 3 รอบ
+      const maxPopupPlays = isNight ? 2 : 3;
 
-      // สร้าง Audio ใหม่ทุกรอบ เพื่อให้มือถือเล่นรอบถัดไปได้แน่นอน
-      const popupAudio = new Audio(soundFile);
-      popupAudio.preload = "auto";
+      if (popupPlayCount < maxPopupPlays) {
+        popupPlayCount++;
+        sound.currentTime = 0;
+        sound.play().catch(err => {
+          console.log("PHASE POPUP REPLAY:", err);
+        });
+        return;
+      }
 
-      popupAudio.onended = () => {
-        if (playNo < totalPlays) {
-          playPopupSound();
-          return;
-        }
+      phasePopupSoundActive = false;
 
-        phasePopupSoundActive = false;
-        if (state) updateGameMusic(state);
-      };
+      // เล่นครบแล้ว ค่อยอนุญาตเพลงพื้นหลัง
+      if (state) updateGameMusic(state);
+    };
 
-      popupAudio.onerror = () => {
-        console.log("PHASE POPUP AUDIO ERROR:", soundFile);
-        phasePopupSoundActive = false;
-        if (state) updateGameMusic(state);
-      };
-
-      popupAudio.play().catch(err => {
-        console.log("PHASE POPUP PLAY ERROR:", err);
-        phasePopupSoundActive = false;
-        if (state) updateGameMusic(state);
-      });
-    }
-
-    playPopupSound();
+    sound.play().catch(err => {
+      console.log("PHASE SOUND:", err);
+      phasePopupSoundActive = false;
+      if (state) updateGameMusic(state);
+    });
   }
 
   clearTimeout(phasePopupTimer);

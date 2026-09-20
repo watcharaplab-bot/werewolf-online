@@ -230,13 +230,6 @@ function checkWinner(room) {
   const alivePlayers = [...room.players.values()].filter(p => p.alive);
   const village = alivePlayers.filter(p => ROLE_INFO[p.role]?.faction === "Village").length;
   const wolves = alivePlayers.filter(p => isWolf(p.role)).length;
-
-  // ไม่มีผู้เล่นรอดชีวิตเลย = เสมอ
-  if (alivePlayers.length === 0) {
-    room.winner = "Draw";
-    return true;
-  }
-
   if (alivePlayers.some(p => p.role === "Tanner" && p.tannerWon)) {
     room.winner = "Tanner";
   } else if (wolves === 0) {
@@ -1175,7 +1168,7 @@ socket.on("continueMemorial", cb => {
   setTimeout(() => {
     if (room.phase !== "memorial") return;
     afterNightMemorial(room);
-  }, 0);
+  }, 1000);
 });
 
 socket.on("newRound", cb => {
