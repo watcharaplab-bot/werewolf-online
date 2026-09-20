@@ -45,6 +45,9 @@ $("newRoundBtn").onclick=()=>socket.emit("newRound",r=>{if(!r.ok)alert(r.error)}
 let currentGameMusic = "";
 
 function updateGameMusic(s){
+  // ถ้าเสียง Popup เช้า/กลางคืนกำลังเล่น ห้ามเพลงพื้นหลังแทรก
+  if (phasePopupSoundActive) return;
+
   const bgm = document.getElementById("gameBgm");
   if(!bgm || !s) return;
 
@@ -1070,6 +1073,9 @@ function loadGlobalChatHistory() {
 let lastPhasePopupKey = null;
 let phasePopupTimer = null;
 
+// ล็อกเพลงพื้นหลังระหว่างเสียง Popup
+let phasePopupSoundActive = false;
+
 function showPhasePopup(type, phaseNo = "") {
   const popup = document.getElementById("phasePopup");
   const img = document.getElementById("phasePopupImg");
@@ -1103,9 +1109,22 @@ function showPhasePopup(type, phaseNo = "") {
   if (countdown) countdown.textContent = remaining;
 
   if (sound) {
+    // ล็อกเพลงพื้นหลังทันที ให้เสียง Popup เล่นจนจบก่อน
+    phasePopupSoundActive = true;
+
     sound.currentTime = 0;
+
+    sound.onended = () => {
+      phasePopupSoundActive = false;
+
+      // เสียง Popup จบแล้ว ค่อยเริ่มเพลงพื้นหลัง Day/Night
+      if (state) updateGameMusic(state);
+    };
+
     sound.play().catch(err => {
       console.log("PHASE SOUND:", err);
+      phasePopupSoundActive = false;
+      if (state) updateGameMusic(state);
     });
   }
 
