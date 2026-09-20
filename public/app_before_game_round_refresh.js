@@ -117,31 +117,6 @@ socket.on("state",s=>{
 
   state=s; me=s.me;
 
-  // ===== OPEN ROLE CARD AFTER ONE-TIME REFRESH =====
-  // รอบ 2 ขึ้นไป หลัง Refresh และกลับเข้าห้องเดิม
-  // เปิดการ์ดให้อัตโนมัติ โดยไม่ Refresh ซ้ำ
-  const _round = Number(s.gameRound || 0);
-  const _roomKey = s.room || localStorage.getItem("ww_room") || "";
-  const _refreshKey = "ww_role_refresh_" + _roomKey + "_" + _round;
-  const _openAfterRefresh =
-    sessionStorage.getItem("ww_open_role_after_refresh");
-
-  if (
-    s.started &&
-    _round >= 2 &&
-    _openAfterRefresh === _refreshKey
-  ) {
-    setTimeout(() => {
-      const roleCard = document.getElementById("roleFlipCard");
-      if (roleCard) {
-        roleCard.classList.remove("role-card-hidden");
-      }
-
-      // ใช้สิทธิ์ครั้งเดียว
-      sessionStorage.removeItem("ww_open_role_after_refresh");
-    }, 300);
-  }
-
   // RESET ROLE CARD EVERY NEW ROUND
   if (
     previousPhase === "gameover" &&
@@ -513,7 +488,7 @@ function renderGame(){
       ? `<div class="vote-badge ${votes>0?'has-votes':''}">🗳️ ${votes} โหวต</div>`
       : "";
     return `<div class="player ${p.alive?'':'dead'}">
-      <span>${p.name}${me.role==="Cupid" && !document.getElementById("roleFlipCard")?.classList.contains("role-card-hidden") && (state.cupidLovers||[]).includes(p.id) ? " 💘" : ""}</span>
+      <span>${p.name}${me.role==="Cupid" && (state.cupidLovers||[]).includes(p.id) ? " 💘" : ""}</span>
       <span>${p.isHost?'👑':''} ${p.alive?'🟢':'💀'}</span>
       ${voteBadge}
     </div>`;
@@ -1436,34 +1411,5 @@ window.toggleRoleCard = function(event) {
     event.target.closest("select")
   ) return;
 
-  // รอบที่ 2 ขึ้นไป:
-  // กดเปิดการ์ดครั้งแรก -> Refresh 1 ครั้ง
-  // หลัง Refresh จะเปิดการ์ดให้อัตโนมัติ และไม่ Refresh ซ้ำ
-  const round = Number(state?.gameRound || 0);
-  const roomKey = state?.room || localStorage.getItem("ww_room") || "";
-  const refreshKey = "ww_role_refresh_" + roomKey + "_" + round;
-
-  if (
-    round >= 2 &&
-    card.classList.contains("role-card-hidden") &&
-    !sessionStorage.getItem(refreshKey)
-  ) {
-    sessionStorage.setItem(refreshKey, "done");
-    sessionStorage.setItem("ww_open_role_after_refresh", refreshKey);
-    location.reload();
-    return;
-  }
-
   card.classList.toggle("role-card-hidden");
-
-  // อัปเดตสัญลักษณ์คู่รักของ Cupid ทันทีหลังพลิกการ์ด
-  if (state && me?.role === "Cupid") {
-    setTimeout(() => {
-      if (typeof renderPlayers === "function") {
-        renderPlayers();
-      } else if (typeof renderGame === "function") {
-        renderGame();
-      }
-    }, 50);
-  }
 };

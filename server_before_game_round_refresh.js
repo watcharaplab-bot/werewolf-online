@@ -146,7 +146,7 @@ function sendState(room) {
     };
     io.to(p.id).emit("state", {
       room: room.code, hostId: room.hostId, started: room.started,
-      phase: room.phase, night: room.night, gameRound: room.gameRound || 0, nightEndsAt: room.nightEndsAt || null, dayEndsAt: room.dayEndsAt || null, players: publicPlayers(room),
+      phase: room.phase, night: room.night, nightEndsAt: room.nightEndsAt || null, dayEndsAt: room.dayEndsAt || null, players: publicPlayers(room),
         me,
 
       // ===== GAME OVER SUMMARY =====
@@ -834,9 +834,6 @@ if (room.huntressUsed?.has(oldId)) {
 
   room.started = true;
     room.winner = null;
-    // เพิ่มเลขรอบเกมทุกครั้งที่ HOST เริ่มเกม
-    room.gameRound = (room.gameRound || 0) + 1;
-
     assignRoles(room);
     startNight(room);
     if (typeof cb === "function") cb({ ok: true });
