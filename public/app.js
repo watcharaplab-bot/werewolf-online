@@ -299,7 +299,19 @@ function renderRoles(){
 
 window.changeRole=(r,d)=>{counts[r]=Math.max(0,Math.min(15,(counts[r]||0)+d));renderRoles()};
 $("startBtn").onclick=()=>{
-  socket.emit("startGame",{roleCounts:counts},r=>{if(!r.ok)err("hostMsg",r.error)});
+  console.log("START GAME CLICK", {
+    counts: counts,
+    totalRoles: Object.values(counts).reduce((a,b)=>a+b,0),
+    players: state?.players?.length
+  });
+
+  socket.emit("startGame",{roleCounts:counts},r=>{
+    console.log("START GAME RESPONSE", r);
+    if(!r?.ok) {
+      alert("START GAME ERROR: " + (r?.error || "Unknown error"));
+      err("hostMsg",r?.error || "Unknown error");
+    }
+  });
 };
 
 function closeDeathPopup(){
