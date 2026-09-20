@@ -507,93 +507,17 @@ function renderGame(){
         ${wolfTeamHtml}
       </div>`;
   const voteSummary = state.voteSummary;
-$("gamePlayers").innerHTML=state.players.map(p=>{
-  const votes = voteSummary?.tally?.[p.id] || 0;
-  const voteBadge = state.phase==="day" && p.alive
-    ? `<div class="vote-badge ${votes>0?'has-votes':''}">🗳️ ${votes} โหวต</div>`
-    : "";
-
-  const roleCardHidden =
-    document.getElementById("roleFlipCard")?.classList.contains("role-card-hidden");
-
-  let secretMarks = "";
-
-  if (!roleCardHidden) {
-
-    // 💘 Cupid
-    if (
-      me.role === "Cupid" &&
-      (state.cupidLovers || []).includes(p.id)
-    ) {
-      secretMarks += " 💘";
-    }
-
-    const action = state.myNightAction;
-
-    if (action) {
-
-      // 🐾 หมาป่าเลือกฆ่า
-      if (
-        action.type === "wolf" &&
-        (
-          action.target === p.id ||
-          action.a === p.id ||
-          action.b === p.id
-        )
-      ) {
-        secretMarks += " 🐾";
-      }
-
-      // 🛡️ Bodyguard
-      if (
-        action.type === "guard" &&
-        action.target === p.id
-      ) {
-        secretMarks += " 🛡️";
-      }
-
-      // 🔮 Seer
-      if (
-        action.type === "seer" &&
-        action.target === p.id
-      ) {
-        secretMarks += " 🔮";
-      }
-
-      // 🎯 Huntress
-      if (
-        action.type === "huntress" &&
-        action.target === p.id
-      ) {
-        secretMarks += " 🎯";
-      }
-
-      // 🔗 DireWolf เลือกผูก
-      if (
-        me.role === "DireWolf" &&
-        action.type === "companion" &&
-        action.target === p.id
-      ) {
-        secretMarks += " 🔗";
-      }
-    }
-
-    // 🔗 DireWolf ที่ผูกไว้จากคืนก่อน
-    if (
-      me.role === "DireWolf" &&
-      state.direCompanion === p.id &&
-      !secretMarks.includes("🔗")
-    ) {
-      secretMarks += " 🔗";
-    }
-  }
-
-  return `<div class="player ${p.alive?'':'dead'}">
-    <span>${p.name}<span class="secret-role-mark">${secretMarks}</span></span>
-    <span>${p.isHost?'👑 ':''}${p.alive?'🟢':'💀'}</span>
-    ${voteBadge}
-  </div>`;
-}).join("");
+  $("gamePlayers").innerHTML=state.players.map(p=>{
+    const votes = voteSummary?.tally?.[p.id] || 0;
+    const voteBadge = state.phase==="day" && p.alive
+      ? `<div class="vote-badge ${votes>0?'has-votes':''}">🗳️ ${votes} โหวต</div>`
+      : "";
+    return `<div class="player ${p.alive?'':'dead'}">
+      <span>${p.name}${me.role==="Cupid" && !document.getElementById("roleFlipCard")?.classList.contains("role-card-hidden") && (state.cupidLovers||[]).includes(p.id) ? " 💘" : ""}</span>
+      <span>${p.isHost?'👑':''} ${p.alive?'🟢':'💀'}</span>
+      ${voteBadge}
+    </div>`;
+  }).join("");
 
   let voteProgress=document.getElementById("voteProgress");
   if(state.phase==="day" && voteSummary){
@@ -892,10 +816,7 @@ function renderGameOver(){
             border-bottom:1px solid rgba(255,255,255,.08);
           ">
             <span style="font-weight:700;">
-              ${p.alive ? "❤️" : "💀"} ${p.alive
-  ? escapeHtml(p.name)
-  : `<span style="text-decoration:line-through; opacity:.65;">${escapeHtml(p.name)}</span>`
-}
+              ${p.alive ? "❤️" : "💀"} ${escapeHtml(p.name)}
             </span>
 
             <span style="text-align:right;">
@@ -1535,13 +1456,14 @@ window.toggleRoleCard = function(event) {
 
   card.classList.toggle("role-card-hidden");
 
-  // อัปเดตสัญลักษณ์ลับทันทีหลังพลิกการ์ด
-  // 💘 Cupid / 🐾 Wolf / 🛡️ Guard / 🔮 Seer / 🎯 Huntress / 🔗 DireWolf
-  if (state) {
-    const hidden = card.classList.contains("role-card-hidden");
-
-    document.querySelectorAll(".secret-role-mark").forEach(el => {
-      el.style.display = hidden ? "none" : "";
-    });
+  // อัปเดตสัญลักษณ์คู่รักของ Cupid ทันทีหลังพลิกการ์ด
+  if (state && me?.role === "Cupid") {
+    setTimeout(() => {
+      if (typeof renderPlayers === "function") {
+        renderPlayers();
+      } else if (typeof renderGame === "function") {
+        renderGame();
+      }
+    }, 50);
   }
 };
