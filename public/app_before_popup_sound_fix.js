@@ -155,22 +155,7 @@ if (s.phase !== "gameover") {
     wolfChatCard.classList.toggle("hidden", !me?.canWolfChat);
   }
 
-  // ถ้าเป็นการเปลี่ยน Day/Night ที่มี Phase Popup
-  // ให้เสียง Popup เล่นก่อน แล้วค่อยเปิดเพลงพื้นหลังเมื่อเสียง Popup จบ
-  const phasePopupSound =
-    s.phase === "night"
-      ? document.getElementById("wolfHowlSound")
-      : s.phase === "day"
-      ? document.getElementById("roosterSound")
-      : null;
-
-  if (phasePopupSound && !phasePopupSound.paused && !phasePopupSound.ended) {
-    phasePopupSound.addEventListener("ended", () => {
-      updateGameMusic(s);
-    }, { once: true });
-  } else {
-    updateGameMusic(s);
-  }
+  updateGameMusic(s);
 
   if(!s.started){
     renderLobby();
