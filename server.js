@@ -294,6 +294,7 @@ function kill(room, id, reason = "") {
 
 function resetRound(room) {
   room.started = false; room.phase = "lobby"; room.night = 0;
+  room.roleCounts = {}; // รอบใหม่: ล้าง Role ที่ HOST เลือกจากรอบก่อน
   room.actions = {}; room.votes = {}; room.deaths = []; room.lovers = [];
   room.wolfChat = []; // ล้างแชทหมาป่าเมื่อจบเกม/เริ่มเกมใหม่
   room.direCompanion = null; room.wolfCubBonus = false;

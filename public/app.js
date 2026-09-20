@@ -821,6 +821,9 @@ window.newRound=()=>socket.emit("newRound",r=>{
   }
   document.getElementById("gameOverPopup")?.remove();
 
+  // รอบใหม่: ล้าง Role ที่ HOST เลือกจากรอบก่อนทั้งหมด
+  Object.keys(counts).forEach(role => counts[role] = 0);
+
   const actionCard=document.getElementById("actionCard");
   if(actionCard) actionCard.style.display="";
 });
