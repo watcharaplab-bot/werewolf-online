@@ -461,6 +461,9 @@ function resolveNight(room) {
     room.wolfCubBonus = false;
     room.diseasedBlocked = false;
 
+    // Diseased: คืนนี้หมาป่าถูกบล็อก ไม่มีผู้เสียชีวิตจากหมาป่า
+    io.to(room.code).emit("noDeathResult", { type: "night" });
+
   } else if (room.wolfCubBonus) {
     // ลูกหมาป่าตาย -> คืนถัดไปหมาป่าฆ่าได้ 2 คน
     const wolfActions = [...room.players.values()]

@@ -117,25 +117,6 @@ socket.on("state",s=>{
 
   state=s; me=s.me;
 
-  // RESET ROLE CARD EVERY NEW ROUND
-  if (
-    previousPhase === "gameover" &&
-    s.phase === "lobby" &&
-    !s.started
-  ) {
-    const roleCard = document.getElementById("roleFlipCard");
-    if (roleCard) roleCard.classList.add("role-card-hidden");
-  }
-
-// เริ่มเกม / เริ่มรอบใหม่ ให้คว่ำการ์ด Role อัตโนมัติ
-if (
-  s.started &&
-  (previousPhase === null || previousPhase === "lobby")
-) {
-  const roleCard = document.getElementById("roleFlipCard");
-  if (roleCard) roleCard.classList.add("role-card-hidden");
-}
-
   // กลับ Lobby / เริ่มรอบใหม่ -> รีเซ็ต Popup Phase
   // เพื่อให้ Night 1 ของเกมรอบใหม่แสดง Popup อีกครั้ง
   if (!s.started || s.phase === "lobby") {
@@ -167,20 +148,13 @@ if (
         ? `day-${s.night || 0}`
         : null;
 
-    if (phaseKey) {
-      // State แรกหลัง Refresh / Reconnect:
-      // จำ Phase ปัจจุบันไว้ แต่ไม่แสดง Popup ซ้ำ
-      if (!previousState) {
-        lastPhasePopupKey = phaseKey;
-      }
-      // แสดง Popup เฉพาะตอน Phase เปลี่ยนจริงระหว่างเล่น
-      else if (
-        phaseKey !== lastPhasePopupKey &&
-        (s.phase !== previousPhase || s.night !== previousNight)
-      ) {
-        lastPhasePopupKey = phaseKey;
-        showPhasePopup(s.phase);
-      }
+    if (
+      phaseKey &&
+      phaseKey !== lastPhasePopupKey &&
+      (s.phase !== previousPhase || s.night !== previousNight)
+    ) {
+      lastPhasePopupKey = phaseKey;
+      showPhasePopup(s.phase);
     }
   }
   // ===== END PHASE POPUP TRIGGER =====
@@ -1370,20 +1344,3 @@ window.testDayPopup = () => showPhasePopup("day");
 
 // ===== END DAY / NIGHT PHASE POPUP =====
 
-
-/* ===== ROLE CARD FLIP ===== */
-window.toggleRoleCard = function(event) {
-  const card = document.getElementById("roleFlipCard");
-  if (!card) return;
-
-  // ถ้ากดปุ่ม / input / Action ด้านหน้าการ์ด
-  // ให้ใช้งาน Action ได้ตามปกติ ไม่พลิกการ์ด
-  if (
-    event.target.closest("button") ||
-    event.target.closest("input") ||
-    event.target.closest("textarea") ||
-    event.target.closest("select")
-  ) return;
-
-  card.classList.toggle("role-card-hidden");
-};
