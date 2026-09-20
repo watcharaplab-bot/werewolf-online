@@ -1059,36 +1059,11 @@ window.leaveGame = function(){
       return;
     }
 
-    // ล้างข้อมูล reconnect ของห้องเก่า
+    // ล้างข้อมูลห้องเดิม ป้องกัน Auto Reconnect กลับเข้าห้อง
     localStorage.removeItem("ww_room");
     localStorage.removeItem("ww_name");
 
-    // ล้าง state ฝั่ง Client ทั้งหมด
-    state = null;
-    me = null;
-    counts = {};
-    lastRoomCode = null;
-
-    window.selectedPlayerId = null;
-    window.playerCardAction = null;
-    window.cupidSelectedIds = [];
-
-    // ล้าง Popup ที่อาจค้าง
-    document.getElementById("gameOverPopup")?.remove();
-    document.getElementById("deathPopup")?.remove();
-    document.getElementById("phasePopup")?.remove();
-
-    // ล้างค่าหน้าสร้าง/เข้าห้อง
-    const roomInput = document.getElementById("roomCode");
-    if(roomInput) roomInput.value = "";
-
-    // กลับหน้า Home โดยไม่ Reload
-    show("home");
-
-    const homeMsg = document.getElementById("homeMsg");
-    if(homeMsg) homeMsg.textContent = "";
-
-    console.log("OK - Left game and client state cleared");
+    location.reload();
   });
 };
 
