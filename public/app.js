@@ -43,6 +43,7 @@ $("newRoundBtn").onclick=()=>socket.emit("newRound",r=>{if(!r.ok)alert(r.error)}
 
 // ===== GAME BACKGROUND MUSIC =====
 let currentGameMusic = "";
+let gameMusicDelayTimer = null;
 
 function updateGameMusic(s){
   // ถ้าเสียง Popup เช้า/กลางคืนกำลังเล่น ห้ามเพลงพื้นหลังแทรก
@@ -71,6 +72,27 @@ function updateGameMusic(s){
 
   if(currentGameMusic === file) return;
 
+  // ยกเลิก Timer เพลงเก่าก่อน
+  if (gameMusicDelayTimer) {
+    clearTimeout(gameMusicDelayTimer);
+    gameMusicDelayTimer = null;
+  }
+
+  // กลางวัน/กลางคืน รอ 7 วินาที เพื่อให้เสียง Popup เล่นก่อน
+  if (s.started && (s.phase === "day" || s.phase === "night")) {
+    gameMusicDelayTimer = setTimeout(() => {
+      currentGameMusic = file;
+      bgm.src = file;
+      bgm.loop = true;
+      bgm.volume = 0.45;
+      bgm.play().catch(()=>{});
+      gameMusicDelayTimer = null;
+    }, 7000);
+
+    return;
+  }
+
+  // Lobby เล่นตามปกติ ไม่ต้องรอ
   currentGameMusic = file;
   bgm.src = file;
   bgm.loop = true;
