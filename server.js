@@ -268,6 +268,14 @@ function checkWinner(room) {
 function startMemorial(room, deadIds) {
   room.memorialDeaths = deadIds.map(id => room.players.get(id)?.name).filter(Boolean);
   room.memorialEndsAt = Date.now() + 5000;
+
+  // Server เป็นคนเดินเกมต่อเองหลังแสดงผลผู้เสียชีวิต 5 วินาที
+  setTimeout(() => {
+    if (!room.started || room.phase !== "memorial") return;
+
+    console.log("AUTO MEMORIAL CONTINUE:", room.code);
+    afterNightMemorial(room);
+  }, 5000);
 }
 function kill(room, id, reason = "") {
   const p = room.players.get(id);

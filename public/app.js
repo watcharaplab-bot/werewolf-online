@@ -361,19 +361,9 @@ $("startBtn").onclick=()=>{
 };
 
 function closeDeathPopup(){
-  // ปิด Popup ผู้เสียชีวิตก่อน
+  // ปิด Popup ผู้เสียชีวิตเท่านั้น
+  // การเดิน Phase ต่อให้ Server เป็นผู้ควบคุม
   document.getElementById("deathPopup")?.remove();
-
-  // HOST ค่อยแจ้ง Server หลัง Popup เดิมปิดสนิท
-  if(state?.phase==="memorial" && state?.hostId===me?.id){
-    setTimeout(()=>{
-      socket.emit("continueMemorial", r=>{
-        if(r && r.error){
-          console.error("MEMORIAL CONTINUE ERROR:",r.error);
-        }
-      });
-    },0);
-  }
 }
 
 function showDeathPopup(names){
@@ -395,19 +385,7 @@ function showDeathPopup(names){
   if(t<=0){
       clearInterval(x);
       closeDeathPopup();
-
-      // ให้ HOST สั่งเดินเกมต่ออัตโนมัติ เฉพาะเมื่อยังอยู่ Memorial
-      // และ Popup ยังไม่ได้ถูกปิดเอง
-      if(
-        document.getElementById("deathPopup") &&
-        state?.phase==="memorial" &&
-        state?.hostId===me?.id
-      ){
-        socket.emit("continueMemorial", r=>{
-          if(r && r.error) console.error("AUTO MEMORIAL ERROR:",r.error);
-        });
       }
-    }
  },1000);
 }
 
