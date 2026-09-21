@@ -149,7 +149,12 @@ socket.on("state",s=>{
     !s.started
   ) {
     const roleCard = document.getElementById("roleFlipCard");
-    if (roleCard) roleCard.classList.add("role-card-hidden");
+    if (roleCard) {
+    roleCard.classList.add("role-card-hidden");
+    document.querySelectorAll(".secret-role-mark").forEach(el => {
+      el.style.display = "none";
+    });
+  }
   }
 
 // เริ่มเกม / เริ่มรอบใหม่ ให้คว่ำการ์ด Role อัตโนมัติ
@@ -158,7 +163,12 @@ if (
   (previousPhase === null || previousPhase === "lobby")
 ) {
   const roleCard = document.getElementById("roleFlipCard");
-  if (roleCard) roleCard.classList.add("role-card-hidden");
+  if (roleCard) {
+    roleCard.classList.add("role-card-hidden");
+    document.querySelectorAll(".secret-role-mark").forEach(el => {
+      el.style.display = "none";
+    });
+  }
 }
 
   // กลับ Lobby / เริ่มรอบใหม่ -> รีเซ็ต Popup Phase
@@ -950,6 +960,8 @@ socket.on("privateResult",r=>{
 socket.on("noDeathResult",r=>{
   if(r && r.type==="vote"){
     showNoDeathPopup("vote");
+  } else if(r && r.type==="night"){
+    showNoDeathPopup("night");
   }
 });
 
@@ -1146,6 +1158,11 @@ window.setupPlayerCardSelection = function(actionType, title, confirmText) {
 
     card.onclick = () => {
       window.selectedPlayerId = p.id;
+
+    // ถ้าเป็นการโหวตกลางวัน ให้อัปเดตปุ่มยืนยันด้านนอกทันที
+    if (window.playerCardAction === "vote") {
+      setTimeout(updateOutsideVoteConfirm, 0);
+    }
 
       document.querySelectorAll("#gamePlayers .player")
         .forEach(x => x.classList.remove("selected-player"));
@@ -1535,6 +1552,13 @@ window.toggleRoleCard = function(event) {
 
   card.classList.toggle("role-card-hidden");
 
+  // อัปเดตปุ่มยืนยันโหวตทันทีเมื่อพลิกการ์ด
+  setTimeout(() => {
+    if (typeof updateOutsideVoteConfirm === "function") {
+      updateOutsideVoteConfirm();
+    }
+  }, 0);
+
   // อัปเดตสัญลักษณ์ลับทันทีหลังพลิกการ์ด
   // 💘 Cupid / 🐾 Wolf / 🛡️ Guard / 🔮 Seer / 🎯 Huntress / 🔗 DireWolf
   if (state) {
@@ -1545,3 +1569,36 @@ window.toggleRoleCard = function(event) {
     });
   }
 };
+
+/* ===== OUTSIDE DAY VOTE CONFIRM ===== */
+function updateOutsideVoteConfirm() {
+  const box = document.getElementById("outsideVoteConfirm");
+  if (!box) return;
+
+  box.innerHTML = "";
+  box.classList.add("hidden");
+
+  const roleCard = document.getElementById("roleFlipCard");
+  const cardHidden = roleCard?.classList.contains("role-card-hidden");
+
+  // เปิดหน้าการ์ดอยู่ = ใช้ปุ่มยืนยันเดิมใน Action
+  // คว่ำการ์ดอยู่ = ใช้ปุ่มยืนยันด้านนอก
+  if (!cardHidden) return;
+
+  if (
+    !state ||
+    state.phase !== "day" ||
+    !me?.alive ||
+    state.voteSummary?.myVoted ||
+    window.playerCardAction !== "vote" ||
+    !window.selectedPlayerId
+  ) return;
+
+  box.classList.remove("hidden");
+  box.innerHTML = `
+    <button type="button" class="primary full"
+      onclick="confirmPlayerCardAction()">
+      ✓ ยืนยันการโหวต
+    </button>
+  `;
+}
