@@ -677,8 +677,32 @@ function renderWolfVoteStatus() {
 }
 
 function renderNight(){
+  // เข้า Night: ล้าง Vote UI และ Reminder จากกลางวันทันที
+  $("actions").innerHTML="";
+  if (typeof cancelDayVoteReminder === "function") cancelDayVoteReminder();
+  document.getElementById("dayVoteReminderPopup")?.remove();
+
   $("actionTitle").textContent="🌙 ความสามารถของคุณ";
   const wolfVoteHtml = renderWolfVoteStatus();
+
+  // ใช้ Action สำเร็จแล้ว -> ซ่อนปุ่มทันที
+  // ยกเว้น Wolf Team เพราะอนุญาตให้เปลี่ยนเป้าหมายได้
+  const isWolfAction =
+    me.role === "Werewolf" ||
+    me.role === "WolfCub" ||
+    me.role === "DireWolf" ||
+    (me.role === "Drunk" &&
+      ["Werewolf","WolfCub","DireWolf"].includes(me.trueRole) &&
+      state.night >= 2);
+
+  if (state.myNightAction && !isWolfAction) {
+    $("actions").innerHTML = "";
+    if (typeof cancelRoleActionReminder === "function") {
+      cancelRoleActionReminder();
+    }
+    document.getElementById("roleActionReminderPopup")?.remove();
+    return;
+  }
   if(!me.alive){$("actions").innerHTML='<div class="notice">คุณเสียชีวิตแล้ว รอดูเกมต่อได้</div>';return}
   if(me.role==="Villager"||me.role==="Tanner"||me.role==="Diseased"||me.role==="Hunter"||(me.role==="Drunk"&&state.night<2)){
     $("actions").innerHTML='<div class="notice">คืนนี้คุณไม่มี Action ที่ต้องทำ</div>';return;
@@ -789,6 +813,12 @@ window.skipAction=()=>{ $("actions").innerHTML='<div class="notice">คืนน
 
 
 function renderDay(){
+  // Vote UI ใช้ได้เฉพาะกลางวันเท่านั้น
+  if (!state || state.phase !== "day") {
+    $("actions").innerHTML="";
+    return;
+  }
+
   $("actionTitle").textContent="☀️ โหวตประหาร";
   scheduleDayVoteReminder();
   console.log("DAY DEBUG", {phase:state.phase, me:me, candidates:candidates().map(p=>({id:p.id,name:p.name,alive:p.alive}))});

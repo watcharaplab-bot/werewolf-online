@@ -840,6 +840,12 @@ function allNightActionsDone(room) {
     const action = room.actions[p.id];
 
     if (!action) return false;
+
+    // Huntress กด "ไม่ใช้พลังคืนนี้" = ทำ Action คืนนี้เสร็จแล้ว
+    if (p.role === "Huntress" && action.type === "huntressSkip") {
+      continue;
+    }
+
     if (!allowed.includes(action.type)) return false;
   }
 
