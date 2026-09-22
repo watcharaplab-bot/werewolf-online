@@ -582,6 +582,9 @@ function availableActions(room, p) {
 }
 
 function resolveNight(room) {
+  if (room.resolvingNight) return;
+  room.resolvingNight = true;
+
   const kills = new Set();
   const notes = [];
 
@@ -696,6 +699,7 @@ function resolveNight(room) {
     room.phase = "memorial";
     room.message = "🕯️ ขอร่วมไว้อาลัยแด่ผู้จากไป";
     sendState(room);
+    room.resolvingNight = false;
     return;
   }
   if (room.pendingHunter) {
@@ -1337,7 +1341,8 @@ socket.on("hunterShot", ({ target }, cb) => {
       room.phase = "memorial";
       room.message = "🕯️ ขอร่วมไว้อาลัยแด่ผู้จากไป";
       sendState(room);
-      return;
+    room.resolvingNight = false;
+    return;
     }
 
     // ถ้ามีนายพรานอีกคนตายจากกระสุน
