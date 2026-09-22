@@ -625,9 +625,8 @@ function resolveNight(room) {
     room.wolfCubBonus = false;
     room.diseasedBlocked = false;
 
-    // Diseased: คืนนี้หมาป่าถูกบล็อก
-    // เก็บสถานะไว้ แล้วค่อยแจ้งผลหลัง resolveNight เสร็จ
-    room.diseasedBlockedThisNight = true;
+    // Diseased: คืนนี้หมาป่าถูกบล็อก ไม่มีผู้เสียชีวิตจากหมาป่า
+    io.to(room.code).emit("noDeathResult", { type: "night" });
 
   } else if (room.wolfCubBonus) {
     // ลูกหมาป่าตาย -> คืนถัดไปหมาป่าฆ่าได้ 2 คน
@@ -686,13 +685,6 @@ function resolveNight(room) {
     room.afterMemorialPhase = nextAfterMemorial;
     console.log("MEMORIAL DEBUG:", { nightDeathStart: room.nightDeathStart, deaths: room.deaths, nightDead });
     startMemorial(room, nightDead);
-
-    // ส่งรายชื่อผู้เสียชีวิตตรงไปยัง Client เพื่อให้ Popup ขึ้นแน่นอน
-    io.to(room.code).emit("deathResult", {
-      type: "night",
-      names: room.memorialDeaths || []
-    });
-
     room.phase = "memorial";
     room.message = "🕯️ ขอร่วมไว้อาลัยแด่ผู้จากไป";
     sendState(room);
@@ -721,12 +713,6 @@ function resolveNight(room) {
     sendState(room);
   }, 6000);
 }
-  // Diseased บล็อกหมาป่า และสุดท้ายคืนนี้ไม่มีผู้เสียชีวิต
-  if (room.diseasedBlockedThisNight && nightDead.length === 0) {
-    io.to(room.code).emit("noDeathResult", { type: "night" });
-  }
-  room.diseasedBlockedThisNight = false;
-
   sendState(room);
   broadcast(room, "nightResult", {
     phase: room.phase, deaths: room.deaths.slice(-10),

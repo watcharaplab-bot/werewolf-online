@@ -452,17 +452,7 @@ function closeNoDeathPopup(){
 }
 
 function renderMemorial(){
-  const names = state.memorialDeaths || [];
-  const key = names.join("|");
-  const now = Date.now();
-
-  // fallback: ถ้า deathResult ยังไม่ได้เปิด Popup จึงค่อยเปิดจาก memorial
-  if (names.length > 0 &&
-      !(key === lastDeathPopupKey && now - lastDeathPopupAt < 7000)) {
-    lastDeathPopupKey = key;
-    lastDeathPopupAt = now;
-    showDeathPopup(names);
-  }
+  showDeathPopup(state.memorialDeaths||[]);
   $("phaseTitle").textContent="🕯️ ไว้อาลัย";
   $("gameMsg").textContent="ขอร่วมไว้อาลัยแด่ผู้จากไป";
 
@@ -1000,24 +990,6 @@ socket.on("noDeathResult",r=>{
   } else if(r && r.type==="night"){
     showNoDeathPopup("night");
   }
-});
-
-let lastDeathPopupKey = "";
-let lastDeathPopupAt = 0;
-
-socket.on("deathResult", r => {
-  if (!r || !Array.isArray(r.names) || r.names.length === 0) return;
-
-  const key = r.names.join("|");
-  const now = Date.now();
-
-  // กัน Popup ซ้ำจาก deathResult + renderMemorial
-  if (key === lastDeathPopupKey && now - lastDeathPopupAt < 7000) return;
-
-  lastDeathPopupKey = key;
-  lastDeathPopupAt = now;
-
-  showDeathPopup(r.names);
 });
 
 socket.on("nightResult",r=>{

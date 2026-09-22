@@ -452,17 +452,7 @@ function closeNoDeathPopup(){
 }
 
 function renderMemorial(){
-  const names = state.memorialDeaths || [];
-  const key = names.join("|");
-  const now = Date.now();
-
-  // fallback: ถ้า deathResult ยังไม่ได้เปิด Popup จึงค่อยเปิดจาก memorial
-  if (names.length > 0 &&
-      !(key === lastDeathPopupKey && now - lastDeathPopupAt < 7000)) {
-    lastDeathPopupKey = key;
-    lastDeathPopupAt = now;
-    showDeathPopup(names);
-  }
+  showDeathPopup(state.memorialDeaths||[]);
   $("phaseTitle").textContent="🕯️ ไว้อาลัย";
   $("gameMsg").textContent="ขอร่วมไว้อาลัยแด่ผู้จากไป";
 
@@ -586,10 +576,7 @@ $("gamePlayers").innerHTML=state.players.map(p=>{
     }
   }
 
-  const hasVoted = state.phase === "day" &&
-      voteSummary?.votedPlayerIds?.includes(p.id);
-
-    return `<div class="player ${p.alive?'':'dead'} ${hasVoted?'voted':''}">
+  return `<div class="player ${p.alive?'':'dead'}">
     <span>${p.name}<span class="secret-role-mark">${secretMarks}</span></span>
     <span>${p.isHost?'👑 ':''}${p.alive?'🟢':'💀'}</span>
     ${voteBadge}
@@ -761,12 +748,6 @@ function act(type,data={}){
       return;
     }
 
-    // Action สำเร็จ -> หยุดการเตือนทันที
-    if (typeof cancelRoleActionReminder === "function") {
-      cancelRoleActionReminder();
-    }
-    document.getElementById("roleActionReminderPopup")?.remove();
-
     // Wolf ต้องสามารถเปลี่ยนเป้าหมายได้
     // รอ state ล่าสุดจาก Server แล้ว render ใหม่
     if(type==="wolf"){
@@ -790,7 +771,6 @@ window.skipAction=()=>{ $("actions").innerHTML='<div class="notice">คืนน
 
 function renderDay(){
   $("actionTitle").textContent="☀️ โหวตประหาร";
-  scheduleDayVoteReminder();
   console.log("DAY DEBUG", {phase:state.phase, me:me, candidates:candidates().map(p=>({id:p.id,name:p.name,alive:p.alive}))});
   $("gameMsg").textContent=state.message||"พูดคุยกับผู้เล่นแล้วเลือก 1 คน";
   if(!me.alive){$("actions").innerHTML='<div class="notice">คุณเสียชีวิตแล้ว</div>';return}
@@ -809,9 +789,6 @@ window.votePlayer=id=>socket.emit("vote",{target:id},r=>{
   if(state.voteSummary){
     state.voteSummary.myVoted=true;
   }
-    // โหวตสำเร็จแล้ว -> หยุดการเตือนทันที
-    if (typeof cancelDayVoteReminder === "function") cancelDayVoteReminder();
-    document.getElementById("dayVoteReminderPopup")?.remove();
 
   $("actions").innerHTML=`<div class="notice">✅ คุณใช้สิทธิ์โหวตในรอบนี้แล้ว<br>⏳ รอผู้เล่นคนอื่นโหวตให้ครบ</div>`;
 });
@@ -823,53 +800,17 @@ function renderHunter(){
   const myId=me?.id;
   const hunterId=state.pendingHunter;
 
-  const hunterLeft = state.hunterEndsAt
-    ? Math.max(0, Math.ceil((state.hunterEndsAt - Date.now()) / 1000))
-    : 15;
-
   if(!myId || !hunterId || myId !== hunterId){
     $("actions").innerHTML='<div class="notice">🏹 รอนายพรานเลือกเป้าหมาย...</div>';
     return;
   }
 
   // นายพรานตายแล้ว แต่ยังมีสิทธิ์เลือกยิงคนที่ยังมีชีวิต
-  const hunterWarning = hunterLeft <= 3
-    ? `⚠️ เหลือ ${hunterLeft} วินาที! หากไม่ยิง ระบบจะเลือกยิงให้อัตโนมัติ`
-    : `⏳ เหลือเวลา ${hunterLeft} วินาที หากไม่ยิง ระบบจะเลือกยิงให้อัตโนมัติ`;
-
-  $("actions").innerHTML =
-    `<div id="hunterCountdown" class="notice">${hunterWarning}</div>`;
-
   setupPlayerCardSelection(
     "hunter",
     "เลือกผู้เล่นที่นายพรานต้องการยิง",
     "🏹 ยืนยันการยิง"
   );
-
-  clearInterval(window.hunterCountdownTimer);
-
-  window.hunterCountdownTimer = setInterval(() => {
-    if (!state || state.phase !== "hunter") {
-      clearInterval(window.hunterCountdownTimer);
-      return;
-    }
-
-    const left = state.hunterEndsAt
-      ? Math.max(0, Math.ceil((state.hunterEndsAt - Date.now()) / 1000))
-      : 0;
-
-    const el = document.getElementById("hunterCountdown");
-    if (!el) return;
-
-    if (left <= 3 && left > 0) {
-      el.innerHTML = `⚠️ เหลือ ${left} วินาที! หากไม่ยิง ระบบจะเลือกยิงให้อัตโนมัติ`;
-    } else if (left > 0) {
-      el.innerHTML = `⏳ เหลือเวลา ${left} วินาที หากไม่ยิง ระบบจะเลือกยิงให้อัตโนมัติ`;
-    } else {
-      el.innerHTML = "🎯 หมดเวลา! ระบบกำลังเลือกเป้าหมายยิงอัตโนมัติ...";
-      clearInterval(window.hunterCountdownTimer);
-    }
-  }, 250);
 }
 
 window.shoot=id=>socket.emit("hunterShot",{target:id},r=>{if(!r.ok)alert(r.error)});
@@ -1000,24 +941,6 @@ socket.on("noDeathResult",r=>{
   } else if(r && r.type==="night"){
     showNoDeathPopup("night");
   }
-});
-
-let lastDeathPopupKey = "";
-let lastDeathPopupAt = 0;
-
-socket.on("deathResult", r => {
-  if (!r || !Array.isArray(r.names) || r.names.length === 0) return;
-
-  const key = r.names.join("|");
-  const now = Date.now();
-
-  // กัน Popup ซ้ำจาก deathResult + renderMemorial
-  if (key === lastDeathPopupKey && now - lastDeathPopupAt < 7000) return;
-
-  lastDeathPopupKey = key;
-  lastDeathPopupAt = now;
-
-  showDeathPopup(r.names);
 });
 
 socket.on("nightResult",r=>{
@@ -1573,59 +1496,6 @@ window.testDayPopup = () => showPhasePopup("day");
 // ===== END DAY / NIGHT PHASE POPUP =====
 
 
-
-/* ===== ROLE ACTION REMINDER ===== */
-let roleActionReminderTimer = null;
-let roleActionReminderKey = null;
-
-function cancelRoleActionReminder(){
-  if(roleActionReminderTimer){
-    clearTimeout(roleActionReminderTimer);
-    clearInterval(roleActionReminderTimer);
-    roleActionReminderTimer = null;
-  }
-}
-
-function scheduleRoleActionReminder(){
-  cancelRoleActionReminder();
-
-  if(!state || !me || !state.started) return;
-  if(state.phase !== "night") return;
-  if(!me.alive) return;
-
-  const card = document.getElementById("roleFlipCard");
-  if(!card || card.classList.contains("role-card-hidden")) return;
-
-  const key = `${state.room || ""}_${state.gameRound || 1}_${state.night || 0}_${me.id || ""}`;
-
-  roleActionReminderTimer = setTimeout(()=>{
-    roleActionReminderTimer = null;
-
-    if(!state || state.phase !== "night" || !me?.alive) return;
-
-    // ไม่สนว่าการ์ด Role จะคว่ำหรือหงาย
-    // ถ้ายังมี Action ที่ต้องทำ ให้แจ้งเตือน
-    if (typeof roleActionStillRequired === "function" && roleActionStillRequired()) {
-      console.log("ROLE ACTION REMINDER:", key, me.role);
-      showRoleActionReminder();
-
-      // ถ้ายังไม่ทำ Action ให้เตือนซ้ำทุก 30 วินาที
-      roleActionReminderTimer = setInterval(() => {
-        if (!state || !me || !state.started || state.phase !== "night" || !me.alive) {
-          cancelRoleActionReminder();
-          return;
-        }
-
-        if (typeof roleActionStillRequired === "function" && roleActionStillRequired()) {
-          showRoleActionReminder();
-        } else {
-          cancelRoleActionReminder();
-        }
-      },30000);
-    }
-  },5000);
-}
-
 /* ===== ROLE CARD FLIP ===== */
 window.toggleRoleCard = function(event) {
   const card = document.getElementById("roleFlipCard");
@@ -1659,10 +1529,6 @@ window.toggleRoleCard = function(event) {
   }
 
   card.classList.toggle("role-card-hidden");
-
-  // เปิดดู Role แล้ว เริ่มรอ 5 วินาที
-  // หลังจากนี้คว่ำหรือหงายการ์ดก็ยังเตือน หาก Action ยังไม่ได้ทำ
-  scheduleRoleActionReminder();
 
   // อัปเดตปุ่มยืนยันโหวตทันทีเมื่อพลิกการ์ด
   setTimeout(() => {
@@ -1713,205 +1579,4 @@ function updateOutsideVoteConfirm() {
       ✓ ยืนยันการโหวต
     </button>
   `;
-}
-
-/* ===== ROLE ACTION REMINDER POPUP ===== */
-function showRoleActionReminder(){
-  if(!state || !me || !state.started || state.phase !== "night" || !me.alive) return;
-
-  const roleNames = {
-    Werewolf: "🐺 หมาป่า",
-    WolfCub: "🐺 ลูกหมาป่า",
-    DireWolf: "🐺 หมาป่าโลกันตร์",
-    Seer: "🔮 ผู้ทำนาย",
-    Bodyguard: "🛡️ ผู้คุ้มกัน",
-    Cupid: "💘 กามเทพ",
-    Huntress: "🏹 พรานหญิง"
-  };
-
-  const roleName = roleNames[me.role] || "Role ของคุณ";
-
-  document.getElementById("roleActionReminderPopup")?.remove();
-
-  const popup = document.createElement("div");
-  popup.id = "roleActionReminderPopup";
-  popup.className = "deathPopup";
-
-  popup.innerHTML = `
-    <div class="deathBox">
-      <div style="font-size:48px">🔔</div>
-      <h2>ถึงเวลาทำ Action</h2>
-      <p><b>${roleName}</b></p>
-      <p>กรุณาเลือก Action ของคุณ</p>
-      <button class="primary full"
-        onclick="document.getElementById('roleActionReminderPopup')?.remove()">
-        ตกลง
-      </button>
-    </div>
-  `;
-
-  document.body.appendChild(popup);
-
-  try {
-    const sound = new Audio("/sounds/death-bell.mp3");
-    sound.volume = 0.8;
-    sound.play().catch(()=>{});
-  } catch(e){}
-
-  try {
-    if(navigator.vibrate) navigator.vibrate([200,100,200]);
-  } catch(e){}
-}
-
-/* ===== CHECK ROLE ACTION STILL REQUIRED ===== */
-function roleActionStillRequired(){
-  if(!state || !me || !state.started || state.phase !== "night" || !me.alive){
-    return false;
-  }
-
-  // Cupid ทำเฉพาะคืนแรก และถ้าเลือกคู่ครบแล้วถือว่าจบ
-  if(me.role === "Cupid"){
-    return Number(state.night) === 1 &&
-      (!Array.isArray(state.cupidLovers) || state.cupidLovers.length < 2);
-  }
-
-  // Seer
-  if(me.role === "Seer"){
-    return !state.seerDone;
-  }
-
-  // Bodyguard
-  if(me.role === "Bodyguard"){
-    return !state.guardDone;
-  }
-
-  // Huntress
-  if(me.role === "Huntress"){
-    return !state.huntressUsed && !state.myNightAction;
-  }
-
-  // หมาป่าทั้ง 3 Role
-  if(["Werewolf","WolfCub","DireWolf"].includes(me.role)){
-    return !state.myNightAction;
-  }
-
-  // DireWolf คืนแรกต้องเลือก Companion ก่อน
-  if(me.role === "DireWolf" && Number(state.night) === 1 && !state.direCompanion){
-    return true;
-  }
-
-  // Role อื่นไม่มี Action ที่ต้องเตือน
-  return false;
-}
-
-/* ===== DAY VOTE REMINDER ===== */
-let dayVoteReminderTimer = null;
-let dayVoteReminderKey = null;
-
-function cancelDayVoteReminder(){
-  if(dayVoteReminderTimer){
-    clearInterval(dayVoteReminderTimer);
-    clearTimeout(dayVoteReminderTimer);
-    dayVoteReminderTimer = null;
-  }
-  dayVoteReminderKey = null;
-  document.getElementById("dayVoteReminderPopup")?.remove();
-}
-
-function showDayVoteReminder(){
-  if(
-    !state ||
-    !me ||
-    !state.started ||
-    state.phase !== "day" ||
-    !me.alive ||
-    state.voteSummary?.myVoted
-  ) return;
-
-  document.getElementById("dayVoteReminderPopup")?.remove();
-
-  const popup = document.createElement("div");
-  popup.id = "dayVoteReminderPopup";
-  popup.className = "deathPopup";
-
-  popup.innerHTML = `
-    <div class="deathBox">
-      <div style="font-size:48px">🗳️</div>
-      <h2>ถึงเวลาโหวตแล้ว</h2>
-      <p>กรุณาเลือกผู้เล่นที่ต้องการโหวต</p>
-      <button class="primary full"
-        onclick="document.getElementById('dayVoteReminderPopup')?.remove()">
-        ตกลง
-      </button>
-    </div>
-  `;
-
-  document.body.appendChild(popup);
-
-  try {
-    const sound = new Audio("/sounds/death-bell.mp3");
-    sound.volume = 0.8;
-    sound.play().catch(()=>{});
-  } catch(e){}
-
-  try {
-    if(navigator.vibrate) navigator.vibrate([200,100,200]);
-  } catch(e){}
-}
-
-function scheduleDayVoteReminder(){
-  if(
-    !state ||
-    !me ||
-    !state.started ||
-    state.phase !== "day" ||
-    !me.alive ||
-    state.voteSummary?.myVoted
-  ){
-    cancelDayVoteReminder();
-    return;
-  }
-
-  // 1 Timer ต่อ 1 Day เท่านั้น ป้องกัน sendState / reconnect สร้างซ้ำ
-  const key = `${state.room || ""}_${state.gameRound || 1}_${state.day || state.dayEndsAt || "day"}`;
-
-  if(dayVoteReminderTimer && dayVoteReminderKey === key){
-    return;
-  }
-
-  cancelDayVoteReminder();
-  dayVoteReminderKey = key;
-
-  // ครั้งแรกหลังเข้า Day 30 วินาที
-  dayVoteReminderTimer = setTimeout(() => {
-    if(
-      !state ||
-      !me ||
-      state.phase !== "day" ||
-      !me.alive ||
-      state.voteSummary?.myVoted
-    ){
-      cancelDayVoteReminder();
-      return;
-    }
-
-    showDayVoteReminder();
-
-    // จากนั้นเตือนซ้ำทุก 30 วินาทีจนกว่าจะโหวต
-    dayVoteReminderTimer = setInterval(() => {
-      if(
-        !state ||
-        !me ||
-        state.phase !== "day" ||
-        !me.alive ||
-        state.voteSummary?.myVoted
-      ){
-        cancelDayVoteReminder();
-        return;
-      }
-
-      showDayVoteReminder();
-    },30000);
-
-  },30000);
 }

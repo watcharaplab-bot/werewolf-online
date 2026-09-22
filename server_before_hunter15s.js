@@ -66,9 +66,7 @@ function newRoom(code, hostId) {
     diseasedBlocked: false, huntressUsed: new Set(),
     lastGuardTarget: null, winner: null,
     wolfChat: [],
-    globalChat: [],
-    hunterTimer: null,
-    hunterEndsAt: null
+    globalChat: []
   };
 }
 
@@ -208,7 +206,6 @@ function sendState(room) {
       winner: room.winner,
       wolfCubBonus: !!room.wolfCubBonus,
       pendingHunter: room.pendingHunter || null,
-      hunterEndsAt: room.hunterEndsAt || null,
       memorialDeaths: room.memorialDeaths || [], memorialEndsAt: room.memorialEndsAt || null,
       message: room.message || "",
         voteSummary: room.phase === "day"
@@ -281,61 +278,6 @@ function startMemorial(room, deadIds) {
     afterNightMemorial(room);
   }, 5000);
 }
-
-function startHunterTimer(room) {
-  if (!room || !room.pendingHunter) return;
-
-  if (room.hunterTimer) {
-    clearInterval(room.hunterTimer);
-    room.hunterTimer = null;
-  }
-
-  room.hunterEndsAt = Date.now() + 15000;
-
-  room.hunterTimer = setInterval(() => {
-    if (!room.started || room.phase !== "hunter" || !room.pendingHunter) {
-      clearInterval(room.hunterTimer);
-      room.hunterTimer = null;
-      room.hunterEndsAt = null;
-      return;
-    }
-
-    const left = Math.max(0, Math.ceil((room.hunterEndsAt - Date.now()) / 1000));
-
-    if (left <= 3 && left > 0) {
-      room.message = `⚠️ นายพรานเหลือ ${left} วินาที หากไม่ยิง ระบบจะเลือกยิงให้อัตโนมัติ`;
-      sendState(room);
-    }
-
-    if (left <= 0) {
-      clearInterval(room.hunterTimer);
-      room.hunterTimer = null;
-      room.hunterEndsAt = null;
-
-      console.log("HUNTER AUTO SHOT TIMEOUT:", room.code);
-
-      const hunterId = room.pendingHunter;
-
-      const targets = [...room.players.values()].filter(p =>
-        p.alive && p.id !== hunterId
-      );
-
-      if (targets.length > 0) {
-        const target = targets[Math.floor(Math.random() * targets.length)];
-
-        console.log("HUNTER AUTO TARGET:", {
-          hunter: hunterId,
-          target: target.name
-        });
-
-        resolveHunterShot(room, target.id, true);
-      }
-    }
-  }, 1000);
-
-  sendState(room);
-}
-
 function kill(room, id, reason = "") {
   const p = room.players.get(id);
   console.log("LOVE DEBUG:", {killedId:id, lovers:room.lovers, players:[...room.players.values()].map(p=>({id:p.id,name:p.name,alive:p.alive}))});
@@ -377,77 +319,6 @@ function kill(room, id, reason = "") {
   return killed;
 }
 
-
-function resolveHunterShot(room, targetId, auto=false) {
-  if (!room || room.phase !== "hunter" || !room.pendingHunter) return false;
-
-  const hunterId = room.pendingHunter;
-  const target = aliveById(room, targetId);
-
-  if (!target || target.id === hunterId) return false;
-
-  // หยุด Timer ของนายพรานคนปัจจุบัน
-  if (room.hunterTimer) {
-    clearInterval(room.hunterTimer);
-    room.hunterTimer = null;
-  }
-  room.hunterEndsAt = null;
-
-  // ใช้สิทธิ์ของนายพรานคนนี้ก่อน kill()
-  // เพราะคนที่ถูกยิงอาจเป็น Hunter และสร้าง pendingHunter คนใหม่
-  room.pendingHunter = null;
-
-  const ds = kill(room, target.id, auto ? "Hunter Auto" : "Hunter");
-  room.deaths.push(...ds);
-
-  if (auto) {
-    room.message = `🏹 หมดเวลา ระบบเลือกยิง ${target.name} อัตโนมัติ`;
-  }
-
-  // มีผู้เสียชีวิต -> Memorial ก่อนเสมอ
-  if (ds.length > 0) {
-    const nextAfterMemorial = room.pendingHunter
-      ? "hunter"
-      : (checkWinner(room) ? "gameover" : (room.afterHunterPhase || "day"));
-
-    room.afterMemorialPhase = nextAfterMemorial;
-    startMemorial(room, ds);
-    room.phase = "memorial";
-    if (!auto) room.message = "💀 ขอร่วมไว้อาลัยแด่ผู้จากไป";
-    sendState(room);
-    return true;
-  }
-
-  // Hunter chain
-  if (room.pendingHunter) {
-    room.winner = null;
-    room.phase = "hunter";
-    room.message = "🏹 นายพรานเสียชีวิต - เลือกคนที่จะยิงภายใน 15 วินาที";
-    startHunterTimer(room);
-    sendState(room);
-    return true;
-  }
-
-  if (checkWinner(room)) {
-    room.phase = "gameover";
-    room.dayEndsAt = null;
-    sendState(room);
-    return true;
-  }
-
-  if (room.afterHunterPhase === "night") {
-    startNight(room);
-    return true;
-  }
-
-  room.phase = "day";
-  room.votes = {};
-  room.dayEndsAt = null;
-  room.message = "☀️ นายพรานยิงแล้ว - เข้าสู่ช่วงพูดคุยและโหวต";
-  sendState(room);
-  return true;
-}
-
 function resetRound(room) {
   room.started = false; room.phase = "lobby"; room.night = 0;
   room.roleCounts = {}; // รอบใหม่: ล้าง Role ที่ HOST เลือกจากรอบก่อน
@@ -456,13 +327,6 @@ function resetRound(room) {
   room.direCompanion = null; room.wolfCubBonus = false;
   room.diseasedBlocked = false; room.huntressUsed = new Set();
   room.afterHunterPhase = null;
-
-  if (room.hunterTimer) {
-    clearInterval(room.hunterTimer);
-    room.hunterTimer = null;
-  }
-  room.hunterEndsAt = null;
-
   room.memorialDeaths = [];
   room.memorialEndsAt = null;
   room.afterMemorialPhase = null;
@@ -625,9 +489,8 @@ function resolveNight(room) {
     room.wolfCubBonus = false;
     room.diseasedBlocked = false;
 
-    // Diseased: คืนนี้หมาป่าถูกบล็อก
-    // เก็บสถานะไว้ แล้วค่อยแจ้งผลหลัง resolveNight เสร็จ
-    room.diseasedBlockedThisNight = true;
+    // Diseased: คืนนี้หมาป่าถูกบล็อก ไม่มีผู้เสียชีวิตจากหมาป่า
+    io.to(room.code).emit("noDeathResult", { type: "night" });
 
   } else if (room.wolfCubBonus) {
     // ลูกหมาป่าตาย -> คืนถัดไปหมาป่าฆ่าได้ 2 คน
@@ -686,13 +549,6 @@ function resolveNight(room) {
     room.afterMemorialPhase = nextAfterMemorial;
     console.log("MEMORIAL DEBUG:", { nightDeathStart: room.nightDeathStart, deaths: room.deaths, nightDead });
     startMemorial(room, nightDead);
-
-    // ส่งรายชื่อผู้เสียชีวิตตรงไปยัง Client เพื่อให้ Popup ขึ้นแน่นอน
-    io.to(room.code).emit("deathResult", {
-      type: "night",
-      names: room.memorialDeaths || []
-    });
-
     room.phase = "memorial";
     room.message = "🕯️ ขอร่วมไว้อาลัยแด่ผู้จากไป";
     sendState(room);
@@ -705,8 +561,7 @@ function resolveNight(room) {
     // Hunter must shoot before final winner check
     room.winner = null;
     room.phase = "hunter";
-    room.message = "🏹 นายพรานเสียชีวิต - เลือกคนที่จะยิงภายใน 15 วินาที";
-    startHunterTimer(room);
+    room.message = "🏹 นายพรานเสียชีวิต - เลือกคนที่จะยิง";
 } else if (!room.pendingHunter) {
   // ไม่มีผู้เสียชีวิต: รอ Popup 5 วิ + เว้น 1 วิ
   room.message = "";
@@ -721,12 +576,6 @@ function resolveNight(room) {
     sendState(room);
   }, 6000);
 }
-  // Diseased บล็อกหมาป่า และสุดท้ายคืนนี้ไม่มีผู้เสียชีวิต
-  if (room.diseasedBlockedThisNight && nightDead.length === 0) {
-    io.to(room.code).emit("noDeathResult", { type: "night" });
-  }
-  room.diseasedBlockedThisNight = false;
-
   sendState(room);
   broadcast(room, "nightResult", {
     phase: room.phase, deaths: room.deaths.slice(-10),
@@ -753,8 +602,7 @@ function afterNightMemorial(room) {
 
   if (next === "hunter") {
     room.phase = "hunter";
-    room.message = "🏹 นายพรานเสียชีวิต - เลือกคนที่จะยิงภายใน 15 วินาที";
-    startHunterTimer(room);
+    room.message = "🏹 นายพรานเสียชีวิต - เลือกคนที่จะยิง";
     sendState(room);
     return;
   }
