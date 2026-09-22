@@ -698,37 +698,29 @@ function resolveNight(room) {
     sendState(room);
     return;
   }
-  if (room.pendingHunter) {
-    // Hunter ต้องทำ Action ก่อนตรวจผู้ชนะ
+  if (!room.pendingHunter && checkWinner(room)) {
+    room.phase = "gameover";
+    room.message = notes.join("\n") || "🌙 จบคืน";
+  } else if (room.pendingHunter) {
+    // Hunter must shoot before final winner check
     room.winner = null;
     room.phase = "hunter";
-    room.message = "🏹 นายพราน เสียชีวิต - เลือกคนที่จะยิงภายใน 15 วินาที";
+    room.message = "🏹 นายพรานเสียชีวิต - เลือกคนที่จะยิงภายใน 15 วินาที";
     startHunterTimer(room);
+} else if (!room.pendingHunter) {
+  // ไม่มีผู้เสียชีวิต: รอ Popup 5 วิ + เว้น 1 วิ
+  room.message = "";
 
-  } else {
-    // ไม่มีผู้เสียชีวิต: ประกาศผลก่อนเสมอ
-    room.message = "";
-    io.to(room.code).emit("noDeathResult", { type: "night" });
+  setTimeout(() => {
+    if (room.phase !== "night") return;
 
-    setTimeout(() => {
-      if (room.phase !== "night") return;
-
-      // Winner ต้องประกาศหลัง Popup ผลของคืนนี้เท่านั้น
-      if (checkWinner(room)) {
-        room.phase = "gameover";
-        room.message = notes.join("\n") || "🌙 จบคืน";
-        sendState(room);
-        return;
-      }
-
-      room.phase = "day";
-      room.votes = {};
-      room.dayEndsAt = null;
-      room.message = "☀️ เช้าวันใหม่ - โปรดพูดคุยและโหวต";
-      sendState(room);
-    }, 6000);
-  }
-
+    room.phase = "day";
+    room.votes = {};
+    room.dayEndsAt = null;
+    room.message = "☀️ เช้าวันใหม่ – โปรดพูดคุยและโหวต";
+    sendState(room);
+  }, 6000);
+}
   // Diseased บล็อกหมาป่า และสุดท้ายคืนนี้ไม่มีผู้เสียชีวิต
   if (room.diseasedBlockedThisNight && nightDead.length === 0) {
     io.to(room.code).emit("noDeathResult", { type: "night" });
@@ -1239,20 +1231,11 @@ function finishDayVote(room) {
     room.phase = "hunter";
     room.message = "🏹 นายพรานเสียชีวิต – เลือกคนที่จะยิง";
     sendState(room);
+  } else if (checkWinner(room)) {
+    room.phase = "gameover";
+    sendState(room);
   } else {
-    // ไม่มีผู้เสียชีวิตจากการโหวต:
-    // รอ Popup ผลโหวตให้จบก่อน แล้ว Winner ต้องเป็น Popup สุดท้าย
-    setTimeout(() => {
-      if (!room.started || room.phase !== "day") return;
-
-      if (checkWinner(room)) {
-        room.phase = "gameover";
-        sendState(room);
-        return;
-      }
-
-      startNight(room);
-    }, 6000);
+    startNight(room);
   }
 }
 
