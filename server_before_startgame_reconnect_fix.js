@@ -997,14 +997,8 @@ if (room.huntressUsed?.has(oldId)) {
 
   socket.on("startGame", ({ roleCounts }, cb) => {
     console.log("=== START GAME RECEIVED ===", socket.id, roleCounts);
-    // Host อาจมี socket.id ใหม่หลัง reconnect
-    // หา room จาก hostId ก่อน แล้วค่อย fallback จาก players
-    const room =
-      [...rooms.values()].find(r => r.hostId === socket.id) ||
-      [...rooms.values()].find(r => r.players.has(socket.id));
-
-    if (!room || room.hostId !== socket.id)
-      return cb({ error: "เฉพาะ HOST เท่านั้น" });
+    const room = [...rooms.values()].find(r => r.players.has(socket.id));
+    if (!room || room.hostId !== socket.id) return cb({ error: "เฉพาะ HOST เท่านั้น" });
     const cleaned = {};
     for (const [role, n] of Object.entries(roleCounts || {})) {
       if (ROLE_INFO[role]) cleaned[role] = Math.max(0, Math.min(15, Number(n) || 0));
