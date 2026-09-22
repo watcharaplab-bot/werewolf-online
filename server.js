@@ -922,11 +922,11 @@ io.on("connection", socket => {
     if (oldEntry) {
       const [oldId, oldPlayer] = oldEntry;
 
-      // ถ้า socket เดิมยัง online อยู่ ไม่ให้ชื่อซ้ำ
-      if (oldId !== socket.id && io.sockets.sockets.has(oldId)) {
-        return cb({ error: "ชื่อผู้เล่นนี้มีอยู่ในห้องแล้ว" });
-      }
-
+    // Auto-Rejoin: ให้ Socket ใหม่เข้ามาแทน Socket เก่าตอน Refresh
+    if (oldId !== socket.id && io.sockets.sockets.has(oldId)) {
+      const oldSocket = io.sockets.sockets.get(oldId);
+      if (oldSocket) oldSocket.leave(code);
+    }
       // ย้ายข้อมูล Player เดิมมายัง Socket ใหม่
       room.players.delete(oldId);
 
