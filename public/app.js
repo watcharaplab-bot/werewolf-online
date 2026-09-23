@@ -117,6 +117,22 @@ socket.on("state",s=>{
 
   state=s; me=s.me;
 
+  // ROUND 2+ : คืนแรก Refresh หน้าเกม 1 ครั้งต่อรอบ
+  if (
+    s.started &&
+    s.phase === "night" &&
+    Number(s.night) === 1 &&
+    Number(s.gameRound) >= 2
+  ) {
+    const refreshKey = `ww_round_refresh_${s.room}_${s.gameRound}`;
+
+    if (!sessionStorage.getItem(refreshKey)) {
+      sessionStorage.setItem(refreshKey, "1");
+      window.location.reload();
+      return;
+    }
+  }
+
   // RESET ROLE CARD EVERY NEW ROUND
   if (
     previousPhase === "gameover" &&
