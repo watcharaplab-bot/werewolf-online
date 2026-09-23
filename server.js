@@ -449,6 +449,7 @@ function resolveHunterShot(room, targetId, auto=false) {
 }
 
 function resetRound(room) {
+  room.resolvingNight = false;
   room.started = false; room.phase = "lobby"; room.night = 0;
   room.roleCounts = {}; // รอบใหม่: ล้าง Role ที่ HOST เลือกจากรอบก่อน
   room.actions = {}; room.votes = {}; room.deaths = []; room.lovers = [];
@@ -516,6 +517,7 @@ function assignRoles(room) {
 }
 
 function startNight(room) {
+  room.resolvingNight = false;
   room.night++;
   room.phase = "night";
   room.actions = {};

@@ -1286,43 +1286,41 @@ window.leaveGame = function(){
   const ok = confirm("🚪 ต้องการออกจากเกมใช่หรือไม่?");
   if(!ok) return;
 
-  socket.emit("leaveGame", {}, (r)=>{
-    if(r && r.error){
-      alert(r.error);
-      return;
-    }
+  // แจ้ง Server แต่ไม่รอ callback
+  socket.emit("leaveGame", {}, ()=>{});
 
-    // ล้างข้อมูล reconnect ของห้องเก่า
-    localStorage.removeItem("ww_room");
-    localStorage.removeItem("ww_name");
+  // ล้างข้อมูล reconnect
+  localStorage.removeItem("ww_room");
+  localStorage.removeItem("ww_name");
 
-    // ล้าง state ฝั่ง Client ทั้งหมด
-    state = null;
-    me = null;
-    counts = {};
-    lastRoomCode = null;
+  // ล้าง Client state
+  state = null;
+  me = null;
+  counts = {};
+  lastRoomCode = null;
 
-    window.selectedPlayerId = null;
-    window.playerCardAction = null;
-    window.cupidSelectedIds = [];
+  window.selectedPlayerId = null;
+  window.playerCardAction = null;
+  window.cupidSelectedIds = [];
 
-    // ล้าง Popup ที่อาจค้าง
-    document.getElementById("gameOverPopup")?.remove();
-    document.getElementById("deathPopup")?.remove();
-    document.getElementById("phasePopup")?.remove();
+  // ล้าง Popup ที่อาจค้าง
+  document.getElementById("gameOverPopup")?.remove();
+  document.getElementById("deathPopup")?.remove();
+  document.getElementById("roleActionReminderPopup")?.remove();
+  document.getElementById("dayVoteReminderPopup")?.remove();
 
-    // ล้างค่าหน้าสร้าง/เข้าห้อง
-    const roomInput = document.getElementById("roomCode");
-    if(roomInput) roomInput.value = "";
+  const phasePopup = document.getElementById("phasePopup");
+  if(phasePopup) phasePopup.classList.add("hidden");
 
-    // กลับหน้า Home โดยไม่ Reload
-    show("home");
+  // ล้างรหัสห้อง
+  const roomInput = document.getElementById("roomCode");
+  if(roomInput) roomInput.value = "";
 
-    const homeMsg = document.getElementById("homeMsg");
-    if(homeMsg) homeMsg.textContent = "";
+  // กลับหน้า Create / Join ทันที
+  show("home");
 
-    console.log("OK - Left game and client state cleared");
-  });
+  const homeMsg = document.getElementById("homeMsg");
+  if(homeMsg) homeMsg.textContent = "";
 };
 
 // ===== WOLF CHAT =====
@@ -1739,11 +1737,6 @@ function showRoleActionReminder(){
 
   document.body.appendChild(popup);
 
-  try {
-    const sound = new Audio("/sounds/death-bell.mp3");
-    sound.volume = 0.8;
-    sound.play().catch(()=>{});
-  } catch(e){}
 
   try {
     if(navigator.vibrate) navigator.vibrate([200,100,200]);

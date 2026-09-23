@@ -967,3 +967,25 @@
   max-height: 80vh !important;
   overflow-y: auto !important;
 }
+
+/* ===== DAY VOTE REMINDER - CENTER POPUP ===== */
+#dayVoteReminderPopup{
+  position: fixed !important;
+  inset: 0 !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  z-index: 99999 !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  padding: 20px !important;
+  box-sizing: border-box !important;
+}
+
+#dayVoteReminderPopup .deathBox{
+  position: relative !important;
+  margin: 0 auto !important;
+  width: min(90vw, 420px) !important;
+  max-height: 80vh !important;
+  overflow-y: auto !important;
+}
