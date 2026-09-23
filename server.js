@@ -1075,31 +1075,35 @@ if (room.huntressUsed?.has(oldId)) {
     return;
   }
 
-  if (type === "cupid") {
-      if (a === b) return cb({ error: "ต้องเลือกคนละ 2 คน" });
-      if (!aliveById(room,a) || !aliveById(room,b)) return cb({ error: "เป้าหมายไม่ถูกต้อง" });
-  // WolfCub Bonus: คืนถัดไปหมาป่าเลือกฆ่า 2 คน
-  if (type === "wolf" && room.wolfCubBonus) {
-    if (!a || !b || a === b) {
-      return cb({ error: "คืนนี้หมาป่าต้องเลือกเป้าหมาย 2 คน" });
+    // WolfCub Bonus: คืนถัดไปทีมหมาป่าฆ่าได้ 2 คน
+    if (type === "wolf" && room.wolfCubBonus) {
+      if (!a || !b || a === b)
+        return cb({ error: "คืนนี้หมาป่าต้องเลือกเป้าหมาย 2 คน" });
+
+      const ta = aliveById(room, a);
+      const tb = aliveById(room, b);
+
+      if (!ta || !tb)
+        return cb({ error: "เป้าหมายไม่ถูกต้อง" });
+
+      if (isWolf(ta.role) || isWolf(tb.role))
+        return cb({ error: "หมาป่าเลือกสมาชิกทีมหมาป่าไม่ได้" });
+
+      room.actions[p.id] = { type: "wolf", a, b };
+
+      cb({ ok: true });
+
+      if (allNightActionsDone(room)) resolveNight(room);
+      else sendState(room);
+      return;
     }
 
-    const ta = aliveById(room, a);
-    const tb = aliveById(room, b);
+    if (type === "cupid") {
+      if (a === b)
+        return cb({ error: "ต้องเลือกคนละ 2 คน" });
 
-    if (!ta || !tb) {
-      return cb({ error: "เป้าหมายไม่ถูกต้อง" });
-    }
-
-room.actions[p.id] = { type, a, b };
-
-    cb({ ok: true });
-
-    if (allNightActionsDone(room)) resolveNight(room);
-    else sendState(room);
-
-    return;
-  }
+      if (!aliveById(room,a) || !aliveById(room,b))
+        return cb({ error: "เป้าหมายไม่ถูกต้อง" });
 
     } else if (type === "companion" || type === "wolf" || type === "seer" || type === "guard" || type === "huntress") {
       const t = aliveById(room, target);

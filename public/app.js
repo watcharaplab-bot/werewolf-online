@@ -725,6 +725,13 @@ function renderNight(){
     ){
       $("actionTitle").textContent="🐺 เลือก เหยื่อ";
 
+      // Wolf Cub ตาย: คืนถัดไปทีมหมาป่าเลือกเหยื่อ 2 คน
+      if (state.wolfCubBonus) {
+        $("actionTitle").textContent="🐺 เลือกเหยื่อ 2 คน";
+        setupWolfBonusSelection();
+        return;
+      }
+
       setupPlayerCardSelection(
         "wolf",
         "เลือก เหยื่อจากรายชื่อผู้เล่น",
@@ -800,7 +807,7 @@ window.chooseHuntress=()=>{setupPlayerCardSelection("huntress","เลือก�
 window.submitHuntress=id=>act("huntress",{target:id});
 window.pickCup=id=>{if(!window.cupA)window.cupA=id;else if(window.cupA!==id)window.cupB=id;document.querySelectorAll("#cup .target").forEach(b=>b.classList.remove("selected"));if(window.cupA)$("cup-"+window.cupA)?.classList.add("selected");if(window.cupB)$("cup-"+window.cupB)?.classList.add("selected")};
 window.submitCupid=()=>{if(!window.cupA||!window.cupB)return alert("เลือก 2 คนก่อน");act("cupid",{a:window.cupA,b:window.cupB})};
-window.skipAction=()=>{ $("actions").innerHTML='<div class="notice">คืนนี้ไม่ใช้พลัง</div>' };
+window.skipAction=()=>act("huntressSkip");
 
 
 function renderDay(){
@@ -1113,6 +1120,62 @@ window.continueMemorial=()=>{
   });
 };
 
+
+/* ===== WOLF CUB BONUS : SELECT 2 TARGETS ===== */
+window.setupWolfBonusSelection = function() {
+  window.wolfBonusSelectedIds = [];
+
+  const wolfIds = new Set((state.wolfTeam || []).map(p => p.id));
+
+  document.querySelectorAll("#gamePlayers .player").forEach((card, index) => {
+    const p = state.players[index];
+
+    card.classList.remove("selectable-player", "selected-player");
+    card.onclick = null;
+
+    if (!p || !p.alive || wolfIds.has(p.id)) return;
+
+    card.classList.add("selectable-player");
+
+    card.onclick = () => {
+      const pos = window.wolfBonusSelectedIds.indexOf(p.id);
+
+      if (pos >= 0) {
+        window.wolfBonusSelectedIds.splice(pos, 1);
+        card.classList.remove("selected-player");
+      } else {
+        if (window.wolfBonusSelectedIds.length >= 2) return;
+        window.wolfBonusSelectedIds.push(p.id);
+        card.classList.add("selected-player");
+      }
+
+      const selected = window.wolfBonusSelectedIds
+        .map(id => state.players.find(x => x.id === id)?.name)
+        .filter(Boolean);
+
+      $("actions").innerHTML =
+        `<div class="notice">
+          🐺 ลูกหมาป่าตาย คืนนี้ทีมหมาป่าฆ่าได้ 2 คน<br>
+          เลือกแล้ว ${selected.length}/2
+          ${selected.length ? "<br>✓ " + selected.join(" + ") : ""}
+        </div>
+        ${selected.length === 2
+          ? '<button class="primary full" onclick="submitWolfBonus()">✓ ยืนยันเหยื่อ 2 คน</button>'
+          : ""}`;
+    };
+  });
+
+  $("actions").innerHTML =
+    '<div class="notice">🐺 ลูกหมาป่าตาย คืนนี้ทีมหมาป่าฆ่าได้ 2 คน<br>👆 เลือกผู้เล่น 2 คน</div>';
+};
+
+window.submitWolfBonus = function() {
+  const ids = window.wolfBonusSelectedIds || [];
+  if (ids.length !== 2) return alert("กรุณาเลือกผู้เล่น 2 คน");
+
+  act("wolf", { a: ids[0], b: ids[1] });
+};
+
 /* ===== PLAYER CARD ACTION SELECT ===== */
 
 window.selectedPlayerId = null;
@@ -1199,11 +1262,13 @@ window.setupPlayerCardSelection = function(actionType, title, confirmText) {
 
   // Bodyguard เลือกผู้เล่นที่ยังมีชีวิตทั้งหมด รวมตัวเอง
   // Action อื่นใช้กติกาเดิม
-  const allowed = actionType === "guard"
-    ? state.players.filter(p => p.alive).map(p => p.id)
-    : actionType === "hunter"
-      ? state.players.filter(p => p.alive && p.id !== me.id).map(p => p.id)
-      : candidates().map(p => p.id);
+    const allowed = actionType === "guard"
+      ? state.players.filter(p => p.alive).map(p => p.id)
+      : actionType === "hunter"
+        ? state.players.filter(p => p.alive && p.id !== me.id).map(p => p.id)
+        : actionType === "companion"
+          ? state.players.filter(p => p.alive && p.id !== me.id).map(p => p.id)
+          : candidates().map(p => p.id);
 
   document.querySelectorAll("#gamePlayers .player").forEach((card, index) => {
     const p = state.players[index];
