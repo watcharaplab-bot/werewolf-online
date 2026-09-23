@@ -6,7 +6,12 @@ const { Server } = require("socket.io");
 
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server);
+const io = new Server(server, {
+  // เพิ่มความทนต่อเน็ตมือถือ / เครื่องที่สลับ Wi-Fi และ Mobile Data
+  pingInterval: 25000,
+  pingTimeout: 60000,
+  connectTimeout: 45000
+});
 
 const PORT = process.env.PORT || 5000;
 app.use(express.static(path.join(__dirname, "public"), {
@@ -1574,7 +1579,12 @@ socket.on("globalChatGet", (cb) => {
     });
   });
 
-  socket.on("disconnect", () => {
+  socket.on("disconnect", (reason) => {
+    console.log("SOCKET DISCONNECT:", {
+      id: socket.id,
+      reason,
+      time: new Date().toISOString()
+    });
     for (const [code, room] of rooms) {
       if (!room.players.has(socket.id)) continue;
 
