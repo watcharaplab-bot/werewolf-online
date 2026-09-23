@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Werewolf Online</title>
+  <link rel="stylesheet" href="/style.css?v=17">
+</head>
+<body>
+  <div id="app">
+    <section id="home" class="screen">
+      <div class="hero">
+        <div class="logo">🐺</div>
+        <h1>WEREWOLF <span>ONLINE</span></h1>
+        <p>Online Multiplayer • สูงสุด 15 คน</p>
+        <div class="card login">
+          <input id="name" maxlength="24" placeholder="ชื่อผู้เล่น">
+          <div class="row">
+            <button id="createBtn" class="primary">สร้างห้อง</button>
+            <input id="roomCode" maxlength="6" placeholder="ROOM CODE">
+            <button id="joinBtn">เข้าร่วมห้อง</button>
+          </div>
+          <div id="homeMsg" class="msg"></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="lobby" class="screen hidden">
+      <header>
+  <div><b>ROOM</b> <strong id="room"></strong></div>
+
+  <div class="game-top-actions">
+    <button id="copyBtn">คัดลอก Code</button>
+    <button type="button" class="top-icon-btn" onclick="location.reload()" title="Refresh">🔄</button>
+    <button type="button" class="top-icon-btn exit-btn" onclick="leaveGame()" title="ออกจากห้อง">🚪</button>
+  </div>
+</header>
+      <main class="grid">
+        <div class="card">
+          <h2>ผู้เล่น <span id="playerCount"></span>/15</h2>
+          <div id="players"></div>
+        </div>
+        <div id="hostPanel" class="card hidden">
+          <h2>👑 เลือก Role</h2>
+          <p class="muted">จำนวน Role ต้องเท่ากับจำนวนผู้เล่น และเลือกซ้ำได้</p>
+          <div id="roles"></div>
+          <div class="total">เลือกแล้ว <b id="roleTotal">0</b> / <span id="roleNeed">0</span></div>
+          <button id="startBtn" class="primary full">🎮 START GAME</button>
+          <div id="hostMsg" class="msg"></div>
+        </div>
+        <div id="waitPanel" class="card">
+          <h2>รอ HOST</h2>
+          <p>แชร์ Room Code ให้เพื่อนเข้าร่วม</p>
+          <div class="bigcode" id="bigCode"></div>
+        </div>
+      </main>
+    </section>
+
+    <section id="game" class="screen hidden game-screen">
+      <header>
+        <div><b id="phaseTitle">NIGHT</b> <span id="nightNo"></span></div>
+      <div class="game-top-actions">
+        <button type="button" class="top-icon-btn" onclick="location.reload()" title="Refresh">🔄</button>
+        <button type="button" class="top-icon-btn exit-btn" onclick="leaveGame()" title="ออกจากเกม">🚪</button>
+      </div>
+        <button id="newRoundBtn" class="hidden">🔄 เล่นรอบใหม่</button>
+      </header>
+      <main class="gamegrid new-game-layout">
+        <div class="card me">
+      <div id="roleFlipCard" class="role-flip-card role-card-hidden" onclick="toggleRoleCard(event)">
+
+        <div class="role-card-back">
+          <img src="/werewolf-card-back.png" alt="Werewolf Card Back">
+        </div>
+
+        <div class="role-card-front">
+          <div id="myRole"></div>
+          <div id="private"></div>
+
+          <div id="actionCard" class="actionCard role-action-area">
+            <h2 id="actionTitle"></h2>
+            <div id="actions"></div>
+            <div id="gameMsg" class="msg"></div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <div class="card">
+          <h2>ผู้เล่น</h2>
+          <div id="outsideVoteConfirm" class="hidden"></div>
+      <div id="gamePlayers"></div>
+        </div>
+          <!-- ===== GLOBAL CHAT ===== -->
+    <div id="globalChatCard" class="card wolf-chat-card">
+      <h2>💬 แชทผู้เล่น</h2>
+      <div id="globalChatMessages" class="wolf-chat-messages"></div>
+      <div class="wolf-chat-input-row">
+        <input id="globalChatInput" maxlength="300" placeholder="พิมพ์ข้อความ...">
+        <button id="globalChatSendBtn" type="button">ส่ง</button>
+      </div>
+      <div id="globalChatMsg" class="msg"></div>
+    </div>
+
+    <!-- ===== WOLF CHAT ===== -->
+    <div id="wolfChatCard" class="card wolf-chat-card hidden">
+      <h2>🐺 แชทหมาป่า</h2>
+      <div id="wolfChatMessages" class="wolf-chat-messages"></div>
+      <div class="wolf-chat-input-row">
+        <input id="wolfChatInput" maxlength="300" placeholder="พิมพ์ข้อความถึงฝูงหมาป่า...">
+        <button id="wolfChatSendBtn" type="button">ส่ง</button>
+      </div>
+      <div id="wolfChatMsg" class="msg"></div>
+    </div>
+</main>
+    </section>
+<script src="/socket.io/socket.io.js"></script>
+<script src="/app.js?v=99"></script>
+
+<!-- GAME BACKGROUND MUSIC -->
+<audio id="gameBgm" loop preload="auto"></audio>
+
+
+<!-- ===== DAY / NIGHT PHASE POPUP ===== -->
+<div id="phasePopup" class="phase-popup hidden">
+  <div class="phase-popup-box">
+    <img id="phasePopupImg" src="" alt="">
+    <div id="phasePopupTitle"></div>
+    <div id="phasePopupCountdown">5</div>
+  </div>
+</div>
+
+<audio id="wolfHowlSound" preload="auto">
+  <source src="/sounds/wolf-howl.mp3" type="audio/mpeg">
+</audio>
+
+<audio id="roosterSound" preload="auto">
+  <source src="/sounds/rooster.mp3" type="audio/mpeg">
+</audio>
+<!-- ===== END PHASE POPUP ===== -->
+
+</body>
+</html>

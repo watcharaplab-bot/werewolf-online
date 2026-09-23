@@ -1,0 +1,4629 @@
+const express = require("express");
+const http = require("http");
+const path = require("path");
+const crypto = require("crypto");
+const { Server } = require("socket.io");
+
+const app = express();
+const server = http.createServer(app);
+const io = new Server(server);
+
+const PORT = process.env.PORT || 5000;
+app.use(express.static(path.join(__dirname, "public"), {
+  etag: false,
+  maxAge: 0,
+  setHeaders: (res) => {
+    res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+    res.setHeader("Pragma", "no-cache");
+    res.setHeader("Expires", "0");
+  }
+}));
+
+const rooms = new Map();
+const MAX_PLAYERS = 15;
+
+const ROLE_INFO = {
+  Villager: { name: "ชาวบ้าน", faction: "Village", emoji: "👨‍🌾" },
+  Seer: { name: "ผู้หยั่งรู้", faction: "Village", emoji: "🔮" },
+  Bodyguard: { name: "ผู้คุ้มกัน", faction: "Village", emoji: "🛡️" },
+  Hunter: { name: "นายพราน", faction: "Village", emoji: "🏹" },
+  Cupid: { name: "กามเทพ", faction: "Village", emoji: "💘" },
+  Tanner: { name: "ยาจก", faction: "Village", emoji: "🤡" },
+  Diseased: { name: "ผู้ติดโรค", faction: "Village", emoji: "🦠" },
+  Huntress: { name: "พรานหญิง", faction: "Village", emoji: "🏹" },
+  Drunk: { name: "คนเมา", faction: "Village", emoji: "🍺" },
+  Werewolf: { name: "มนุษย์หมาป่า", faction: "Werewolf", emoji: "🐺" },
+  WolfCub: { name: "ลูกหมาป่า", faction: "Werewolf", emoji: "🐺" },
+  DireWolf: { name: "หมาป่าโลกันตร์", faction: "Werewolf", emoji: "🐺" }
+};
+
+const isWolf = r => ["Werewolf", "WolfCub", "DireWolf"].includes(r);
+const alive = p => p.alive;
+
+function canUseWolfChat(player) {
+  if (!player) return false;
+
+  // หมาป่าที่รู้บทแล้ว เข้าแชทได้เสมอ แม้ตายแล้ว
+  if (isWolf(player.role)) return true;
+
+  // ขี้เมาที่ยังไม่รู้บท ห้ามเข้า
+  // แต่ถ้าตายก่อนรู้บท และ trueRole เป็นหมาป่า ให้เข้าได้ทันที
+  if (player.role === "Drunk") {
+    return !player.alive && isWolf(player.trueRole);
+  }
+
+  return false;
+}
+
+function rid() { return crypto.randomBytes(3).toString("hex").toUpperCase(); }
+
+function newRoom(code, hostId) {
+  return {
+    code, hostId, players: new Map(), roleCounts: {},
+    started: false, phase: "lobby", night: 0,
+    actions: {}, votes: {}, deaths: [], lovers: [],
+    direCompanion: null, wolfCubBonus: false,
+    diseasedBlocked: false, huntressUsed: new Set(),
+    lastGuardTarget: null, winner: null,
+    wolfChat: [],
+    globalChat: [],
+    hunterTimer: null,
+    hunterEndsAt: null
+  };
+}
+
+function publicPlayers(room) {
+  return [...room.players.values()].map(p => ({
+    id: p.id, name: p.name, alive: p.alive,
+    isHost: p.id === room.hostId,
+    roleKnown: room.started && !p.alive ? p.role : null
+  }));
+}
+
+function getVoteSummary(room) {
+  const tally = {};
+
+  for (const targetId of Object.values(room.votes || {})) {
+    const target = room.players.get(targetId);
+    if (target && target.alive) {
+      tally[targetId] = (tally[targetId] || 0) + 1;
+    }
+  }
+
+  const alivePlayers = [...room.players.values()].filter(p => p.alive);
+
+  return {
+    tally,
+    votedCount: alivePlayers.filter(p =>
+      Object.prototype.hasOwnProperty.call(room.votes || {}, p.id)
+    ).length,
+    voterCount: alivePlayers.length
+  };
+}
+
+function getWolfTeamFor(room, viewer) {
+  // ผู้เล่นปกติที่เป็นฝ่ายหมาป่า
+  const viewerIsWolf = isWolf(viewer.role);
+
+  // Drunk ที่ได้บทจริงเป็นหมาป่า จะรู้ตัวตั้งแต่คืนที่ 2
+  const viewerIsDrunkWolf =
+    viewer.role === "Drunk" &&
+    isWolf(viewer.trueRole) &&
+    room.night >= 2;
+
+  // คนที่ไม่ใช่ฝ่ายหมาป่า จะไม่ได้รับรายชื่อ
+  if (!viewerIsWolf && !viewerIsDrunkWolf) return [];
+
+  return [...room.players.values()]
+    .filter(player => {
+      // หมาป่าปกติ เห็นได้ทันที
+      if (isWolf(player.role)) return true;
+
+      // Drunk ที่ได้บทหมาป่า ซ่อนในคืนแรก
+      // และเปิดเผยต่อทีมตั้งแต่คืนที่ 2
+      if (
+        player.role === "Drunk" &&
+        isWolf(player.trueRole) &&
+        room.night >= 2
+      ) {
+        return true;
+      }
+
+      return false;
+    })
+    .map(player => ({
+      id: player.id,
+      name: player.name,
+      alive: player.alive
+    }));
+}
+
+function sendState(room) {
+  for (const p of room.players.values()) {
+    const me = {
+      id: p.id, name: p.name, alive: p.alive, role: p.role,
+      trueRole: p.trueRole || null, wasDrunk: !!p.wasDrunk, faction: ROLE_INFO[p.role]?.faction,
+      emoji: ROLE_INFO[p.role]?.emoji, night: room.night,
+      canWolfChat: canUseWolfChat(p)
+    };
+    io.to(p.id).emit("state", {
+      room: room.code, hostId: room.hostId, started: room.started,
+      phase: room.phase, night: room.night, gameRound: room.gameRound || 0, nightEndsAt: room.nightEndsAt || null, dayEndsAt: room.dayEndsAt || null, players: publicPlayers(room),
+        me,
+
+      // ===== GAME OVER SUMMARY =====
+      // เปิดเผย Role ของผู้เล่นทุกคน เฉพาะตอนจบเกม
+      gameSummary: room.phase === "gameover"
+        ? [...room.players.values()].map(player => ({
+            id: player.id,
+            name: player.name,
+            alive: player.alive,
+            role: player.role,
+            roleName: ROLE_INFO[player.role]?.name || player.role,
+            emoji: ROLE_INFO[player.role]?.emoji || "🎭",
+
+            // คนเมา แสดงทั้งบทคนเมาและบทจริง
+            trueRole: player.wasDrunk
+              ? player.trueRole
+              : null,
+
+            trueRoleName:
+              player.wasDrunk && player.trueRole
+                ? (ROLE_INFO[player.trueRole]?.name || player.trueRole)
+                : null,
+
+            trueRoleEmoji:
+              player.wasDrunk && player.trueRole
+                ? (ROLE_INFO[player.trueRole]?.emoji || "🎭")
+                : null
+          }))
+        : null,
+
+        lastGuardTarget: p.role === "Bodyguard" ? (room.lastGuardTarget || null) : null,
+        guardDone: p.role === "Bodyguard" ? (room.actions[p.id]?.type === "guard") : false,
+          huntressUsed: p.role === "Huntress" ? room.huntressUsed.has(p.id) : false,
+        seerDone: room.actions[p.id]?.type === "seer",
+
+      // เป้าหมาย Action ส่วนตัว เห็นเฉพาะเจ้าของ Role
+      myNightAction: (() => {
+        const a = room.actions[p.id];
+        if (!a) return null;
+
+        if (["wolf","guard","seer","huntress","companion"].includes(a.type)) {
+          return {
+            type: a.type,
+            target: a.target || null,
+            a: a.a || null,
+            b: a.b || null
+          };
+        }
+
+        return null;
+      })(),
+
+      wolfTeam: getWolfTeamFor(room, p),
+      direCompanion: p.role === "DireWolf" ? room.direCompanion : null,
+        lovers: room.lovers.includes(p.id) ? room.lovers : [],
+        cupidLovers: p.role === "Cupid" ? room.lovers : [],
+      winner: room.winner,
+      wolfCubBonus: !!room.wolfCubBonus,
+      pendingHunter: room.pendingHunter || null,
+      hunterEndsAt: room.hunterEndsAt || null,
+      memorialDeaths: room.memorialDeaths || [], memorialEndsAt: room.memorialEndsAt || null,
+      message: room.message || "",
+        voteSummary: room.phase === "day"
+        ? {
+            ...getVoteSummary(room),
+            myVoted: Object.prototype.hasOwnProperty.call(room.votes || {}, p.id),
+              votedPlayerIds: Object.keys(room.votes || {})
+          }
+        : null,
+        wolfVoteSummary:
+          room.phase === "night" &&
+          (
+            isWolf(p.role) ||
+            (
+              p.role === "Drunk" &&
+              isWolf(p.trueRole) &&
+              room.night >= 2
+            )
+          )
+            ? getWolfVoteSummary(room)
+            : null
+    });
+  }
+}
+
+function broadcast(room, event, data) {
+  io.to(room.code).emit(event, data);
+}
+
+function aliveById(room, id) {
+  const p = room.players.get(id);
+  return p && p.alive ? p : null;
+}
+
+function livingCount(room, faction) {
+  return [...room.players.values()].filter(p => p.alive && (!faction || ROLE_INFO[p.role]?.faction === faction)).length;
+}
+
+function checkWinner(room) {
+  if (room.winner) return true;
+  const alivePlayers = [...room.players.values()].filter(p => p.alive);
+  const village = alivePlayers.filter(p => ROLE_INFO[p.role]?.faction === "Village").length;
+  const wolves = alivePlayers.filter(p => isWolf(p.role)).length;
+
+  // ไม่มีผู้เล่นรอดชีวิตเลย = เสมอ
+  if (alivePlayers.length === 0) {
+    room.winner = "Draw";
+    return true;
+  }
+
+  if (alivePlayers.some(p => p.role === "Tanner" && p.tannerWon)) {
+    room.winner = "Tanner";
+  } else if (wolves === 0) {
+    room.winner = "Village";
+  } else if (wolves >= village) {
+    room.winner = "Werewolf";
+  }
+  return !!room.winner;
+}
+
+function startMemorial(room, deadIds) {
+  room.memorialDeaths = deadIds.map(id => room.players.get(id)?.name).filter(Boolean);
+  room.memorialEndsAt = Date.now() + 5000;
+
+  // Server เป็นคนเดินเกมต่อเองหลังแสดงผลผู้เสียชีวิต 5 วินาที
+  setTimeout(() => {
+    if (!room.started || room.phase !== "memorial") return;
+
+    console.log("AUTO MEMORIAL CONTINUE:", room.code);
+    afterNightMemorial(room);
+  }, 5000);
+}
+
+function startHunterTimer(room) {
+  if (!room || !room.pendingHunter) return;
+
+  if (room.hunterTimer) {
+    clearInterval(room.hunterTimer);
+    room.hunterTimer = null;
+  }
+
+  room.hunterEndsAt = Date.now() + 15000;
+
+  room.hunterTimer = setInterval(() => {
+    if (!room.started || room.phase !== "hunter" || !room.pendingHunter) {
+      clearInterval(room.hunterTimer);
+      room.hunterTimer = null;
+      room.hunterEndsAt = null;
+      return;
+    }
+
+    const left = Math.max(0, Math.ceil((room.hunterEndsAt - Date.now()) / 1000));
+
+    if (left <= 3 && left > 0) {
+      room.message = `⚠️ นายพรานเหลือ ${left} วินาที หากไม่ยิง ระบบจะเลือกยิงให้อัตโนมัติ`;
+      sendState(room);
+    }
+
+    if (left <= 0) {
+      clearInterval(room.hunterTimer);
+      room.hunterTimer = null;
+      room.hunterEndsAt = null;
+
+      console.log("HUNTER AUTO SHOT TIMEOUT:", room.code);
+
+      const hunterId = room.pendingHunter;
+
+      const targets = [...room.players.values()].filter(p =>
+        p.alive && p.id !== hunterId
+      );
+
+      if (targets.length > 0) {
+        const target = targets[Math.floor(Math.random() * targets.length)];
+
+        console.log("HUNTER AUTO TARGET:", {
+          hunter: hunterId,
+          target: target.name
+        });
+
+        resolveHunterShot(room, target.id, true);
+      }
+    }
+  }, 1000);
+
+  sendState(room);
+}
+
+function kill(room, id, reason = "") {
+  const p = room.players.get(id);
+  console.log("LOVE DEBUG:", {killedId:id, lovers:room.lovers, players:[...room.players.values()].map(p=>({id:p.id,name:p.name,alive:p.alive}))});
+  if (!p || !p.alive) return [];
+  p.alive = false;
+  p.deathReason = reason;
+  if (p.role === "Hunter") room.pendingHunter = id;
+  if (p.role === "WolfCub") room.wolfCubBonus = true;
+  const killed = [id];
+
+  // Lover death chain
+  const idx = room.lovers.indexOf(id);
+  if (idx >= 0) {
+    const lover = room.lovers[idx === 0 ? 1 : 0];
+    const lp = room.players.get(lover);
+    if (lp && lp.alive) {
+      lp.alive = false;
+      lp.deathReason = "Lover";
+      killed.push(lover);
+    if (lp.role === "Hunter") room.pendingHunter = lover;
+      if (lp.role === "WolfCub") room.wolfCubBonus = true;
+    }
+  }
+
+  // Dire Wolf death chain:
+  // ถ้า Companion ตาย ไม่ว่าจาก Night / Vote / Hunter / Lover
+  // Dire Wolf ที่ยังมีชีวิตต้องตายตาม
+  if (room.direCompanion && killed.includes(room.direCompanion)) {
+    const dw = [...room.players.values()].find(
+      x => x.alive && x.role === "DireWolf"
+    );
+
+    if (dw) {
+      const extra = kill(room, dw.id, "Dire Wolf companion");
+      killed.push(...extra);
+    }
+  }
+
+  return killed;
+}
+
+
+function resolveHunterShot(room, targetId, auto=false) {
+  if (!room || room.phase !== "hunter" || !room.pendingHunter) return false;
+
+  const hunterId = room.pendingHunter;
+  const target = aliveById(room, targetId);
+
+  if (!target || target.id === hunterId) return false;
+
+  // หยุด Timer ของนายพรานคนปัจจุบัน
+  if (room.hunterTimer) {
+    clearInterval(room.hunterTimer);
+    room.hunterTimer = null;
+  }
+  room.hunterEndsAt = null;
+
+  // ใช้สิทธิ์ของนายพรานคนนี้ก่อน kill()
+  // เพราะคนที่ถูกยิงอาจเป็น Hunter และสร้าง pendingHunter คนใหม่
+  room.pendingHunter = null;
+
+  const ds = kill(room, target.id, auto ? "Hunter Auto" : "Hunter");
+  room.deaths.push(...ds);
+
+  if (auto) {
+    room.message = `🏹 หมดเวลา ระบบเลือกยิง ${target.name} อัตโนมัติ`;
+  }
+
+  // มีผู้เสียชีวิต -> Memorial ก่อนเสมอ
+  if (ds.length > 0) {
+    const nextAfterMemorial = room.pendingHunter
+      ? "hunter"
+      : (checkWinner(room) ? "gameover" : (room.afterHunterPhase || "day"));
+
+    room.afterMemorialPhase = nextAfterMemorial;
+    startMemorial(room, ds);
+    room.phase = "memorial";
+    if (!auto) room.message = "💀 ขอร่วมไว้อาลัยแด่ผู้จากไป";
+    sendState(room);
+    return true;
+  }
+
+  // Hunter chain
+  if (room.pendingHunter) {
+    room.winner = null;
+    room.phase = "hunter";
+    room.message = "🏹 นายพรานเสียชีวิต - เลือกคนที่จะยิงภายใน 15 วินาที";
+    startHunterTimer(room);
+    sendState(room);
+    return true;
+  }
+
+  if (checkWinner(room)) {
+    room.phase = "gameover";
+    room.dayEndsAt = null;
+    sendState(room);
+    return true;
+  }
+
+  if (room.afterHunterPhase === "night") {
+    startNight(room);
+    return true;
+  }
+
+  room.phase = "day";
+  room.votes = {};
+  room.dayEndsAt = null;
+  room.message = "☀️ นายพรานยิงแล้ว - เข้าสู่ช่วงพูดคุยและโหวต";
+  sendState(room);
+  return true;
+}
+
+function resetRound(room) {
+  room.started = false; room.phase = "lobby"; room.night = 0;
+  room.roleCounts = {}; // รอบใหม่: ล้าง Role ที่ HOST เลือกจากรอบก่อน
+  room.actions = {}; room.votes = {}; room.deaths = []; room.lovers = [];
+  room.wolfChat = []; // ล้างแชทหมาป่าเมื่อจบเกม/เริ่มเกมใหม่
+  room.direCompanion = null; room.wolfCubBonus = false;
+  room.diseasedBlocked = false; room.huntressUsed = new Set();
+  room.afterHunterPhase = null;
+
+  if (room.hunterTimer) {
+    clearInterval(room.hunterTimer);
+    room.hunterTimer = null;
+  }
+  room.hunterEndsAt = null;
+
+  room.memorialDeaths = [];
+  room.memorialEndsAt = null;
+  room.afterMemorialPhase = null;
+  room.lastGuardTarget = null; room.winner = null; room.message = "";
+  for (const p of room.players.values()) {
+    p.alive = true; p.role = null; p.trueRole = null; p.tannerWon = false;
+    p.deathReason = null;
+  }
+}
+
+function assignRoles(room) {
+  const roles = [];
+  for (const [r, n] of Object.entries(room.roleCounts)) {
+    for (let i = 0; i < n; i++) roles.push(r);
+  }
+  if (roles.length !== room.players.size) return false;
+  for (let i = roles.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [roles[i], roles[j]] = [roles[j], roles[i]];
+  }
+  const ps = [...room.players.values()];
+  ps.forEach((p, i) => {
+    p.role = roles[i];
+    p.trueRole = p.role;
+    p.wasDrunk = (p.role === "Drunk");
+  });
+
+  // Drunk: สุ่ม Role จริง
+  // Role พิเศษเหล่านี้ ถ้ามีอยู่ในเกมแล้ว Drunk ห้ามสุ่มซ้ำ
+  const drunk = ps.find(p => p.role === "Drunk");
+  if (drunk) {
+    const uniqueRoles = ["Seer", "Bodyguard", "WolfCub", "Cupid", "Tanner", "DireWolf"];
+    const allRoles = [
+      "Villager", "Seer", "Bodyguard", "Hunter", 
+      "Tanner", "Diseased", "Huntress",
+      "Werewolf", "WolfCub", 
+    ];
+
+    const existingRoles = new Set(
+      ps.filter(p => p.id !== drunk.id).map(p => p.role)
+    );
+
+    const pool = allRoles.filter(r =>
+      !uniqueRoles.includes(r) || !existingRoles.has(r)
+    );
+
+    drunk.trueRole = pool[Math.floor(Math.random() * pool.length)];
+  }
+
+  return true;
+}
+
+function startNight(room) {
+  room.night++;
+  room.phase = "night";
+  room.actions = {};
+  room.votes = {};
+
+  // Drunk: เปิดเผย Role จริงทันทีเมื่อเริ่มคืนที่ 2
+  if (room.night >= 2) {
+    const drunk = [...room.players.values()].find(
+      p => p.wasDrunk && p.role === "Drunk"
+    );
+    if (drunk && drunk.trueRole) {
+      drunk.role = drunk.trueRole;
+    }
+  }
+
+  // ไม่มีเวลาจำกัดในช่วงกลางคืน
+  room.nightEndsAt = null;
+  room.nightDeathStart = room.deaths.length;
+
+  room.message = `🌙 คืนที่ ${room.night} — ผู้มีพลัง กรุณาเลือกการกระทำของคุณ`;
+
+  sendState(room);
+
+  broadcast(room, "phase", {
+    phase: "night",
+    night: room.night,
+    message: room.message
+  });
+}
+
+function availableActions(room, p) {
+  if (!p.alive || room.phase !== "night") return [];
+
+  const actions = [];
+
+  if (p.role === "Seer")
+    actions.push("seer");
+
+  if (p.role === "Bodyguard")
+    actions.push("guard");
+
+  if (
+    p.role === "Cupid" &&
+    !room.lovers?.length
+  )
+    actions.push("cupid");
+
+  if (isWolf(p.role))
+    actions.push("wolf");
+
+  if (
+    p.role === "Huntress" &&
+    !room.huntressUsed.has(p.id)
+  )
+    actions.push("huntress", "huntressSkip");
+
+  if (
+    p.role === "DireWolf" &&
+    !room.direCompanion
+  )
+    actions.push("companion");
+
+  return actions;
+}
+
+function resolveNight(room) {
+  if (room.resolvingNight) return;
+  room.resolvingNight = true;
+
+  const kills = new Set();
+  const notes = [];
+
+  // Cupid first night
+  const cupid = [...room.players.values()].find(p => p.alive && p.role === "Cupid");
+  if (cupid && room.night === 1 && room.actions[cupid.id]?.type === "cupid") {
+    const a = aliveById(room, room.actions[cupid.id].a);
+    const b = aliveById(room, room.actions[cupid.id].b);
+    if (a && b && a.id !== b.id) {
+      room.lovers = [a.id, b.id];
+    }
+  }
+
+  // Dire Wolf companion
+  const dire = [...room.players.values()].find(p => p.alive && p.role === "DireWolf");
+  if (
+    dire &&
+    !room.direCompanion &&
+    room.actions[dire.id]?.type === "companion"
+  ) {
+    const target = aliveById(room, room.actions[dire.id].target);
+    if (target && target.id !== dire.id) room.direCompanion = target.id;
+  }
+
+  // Guard
+  let guardTarget = null;
+  const guard = [...room.players.values()].find(p => p.alive && p.role === "Bodyguard");
+  if (guard && room.actions[guard.id]?.type === "guard") {
+    const target = aliveById(room, room.actions[guard.id].target);
+    if (target && target.id !== room.lastGuardTarget) {
+      guardTarget = target.id;
+      room.lastGuardTarget = target.id;
+    }
+  }
+
+  // Werewolf target(s) - ต้องเลือกเหยื่อตรงกันทั้งทีม
+  const wolfSummary = getWolfVoteSummary(room);
+  let wolfTargets = [];
+
+  if (room.diseasedBlocked) {
+    room.wolfCubBonus = false;
+    room.diseasedBlocked = false;
+
+    // Diseased: คืนนี้หมาป่าถูกบล็อก
+    // เก็บสถานะไว้ แล้วค่อยแจ้งผลหลัง resolveNight เสร็จ
+    room.diseasedBlockedThisNight = true;
+
+  } else if (room.wolfCubBonus) {
+    // ลูกหมาป่าตาย -> คืนถัดไปหมาป่าฆ่าได้ 2 คน
+    const wolfActions = [...room.players.values()]
+      .filter(p => p.alive && isWolf(p.role))
+      .map(p => room.actions[p.id])
+      .filter(a => a && a.type === "wolf");
+
+    const bonusAction = wolfActions.find(a => a.a && a.b);
+
+    if (bonusAction) {
+      wolfTargets = [bonusAction.a, bonusAction.b];
+      room.wolfCubBonus = false;
+    }
+
+  } else if (wolfSummary.unanimous && wolfSummary.targetId) {
+    // คืนปกติ หมาป่าฆ่า 1 คน
+    wolfTargets = [wolfSummary.targetId];
+  }
+  const diseasedWolfTarget = wolfTargets.some(id => room.players.get(id)?.role === "Diseased");
+
+  for (const target of wolfTargets) {
+    if (target !== guardTarget) {
+      kills.add(target);
+    } else {
+    }
+  }
+
+  // Huntress
+  for (const p of room.players.values()) {
+    const a = room.actions[p.id];
+    if (p.alive && p.role === "Huntress" && a?.type === "huntress" && a.target) {
+      const t = aliveById(room, a.target);
+      if (t && t.id !== p.id) {
+        kills.add(t.id);
+        room.huntressUsed.add(p.id);
+      }
+    }
+  }
+
+  // Resolve deaths and special triggers
+  for (const id of kills) {
+    const p = room.players.get(id);
+    if (!p || !p.alive) continue;
+    const beforeRole = p.role;
+    const newlyDead = kill(room, id, "Night");
+    room.deaths.push(...newlyDead);
+  if (diseasedWolfTarget && wolfTargets.some(id => room.players.get(id)?.role === "Diseased" && kills.has(id))) room.diseasedBlocked = true;
+  }
+
+
+  const nightDead = room.deaths.slice(room.nightDeathStart || 0);
+  const nextAfterMemorial = room.pendingHunter ? "hunter" : (checkWinner(room) ? "gameover" : "day");
+  if (room.pendingHunter) room.afterHunterPhase = "day";
+  if (nightDead.length > 0) {
+    room.afterMemorialPhase = nextAfterMemorial;
+    console.log("MEMORIAL DEBUG:", { nightDeathStart: room.nightDeathStart, deaths: room.deaths, nightDead });
+    startMemorial(room, nightDead);
+
+    // ส่งรายชื่อผู้เสียชีวิตตรงไปยัง Client เพื่อให้ Popup ขึ้นแน่นอน
+    io.to(room.code).emit("deathResult", {
+      type: "night",
+      names: room.memorialDeaths || []
+    });
+
+    room.phase = "memorial";
+    room.message = "🕯️ ขอร่วมไว้อาลัยแด่ผู้จากไป";
+    sendState(room);
+    room.resolvingNight = false;
+    return;
+  }
+  if (room.pendingHunter) {
+    // Hunter ต้องทำ Action ก่อนตรวจผู้ชนะ
+    room.winner = null;
+    room.phase = "hunter";
+    room.message = "🏹 นายพราน เสียชีวิต - เลือกคนที่จะยิงภายใน 15 วินาที";
+    startHunterTimer(room);
+
+  } else {
+    // ไม่มีผู้เสียชีวิต: ประกาศผลก่อนเสมอ
+    room.message = "";
+    io.to(room.code).emit("noDeathResult", { type: "night" });
+
+    setTimeout(() => {
+      if (room.phase !== "night") return;
+
+      // Winner ต้องประกาศหลัง Popup ผลของคืนนี้เท่านั้น
+      if (checkWinner(room)) {
+        room.phase = "gameover";
+        room.message = notes.join("\n") || "🌙 จบคืน";
+        sendState(room);
+        return;
+      }
+
+      room.phase = "day";
+      room.votes = {};
+      room.dayEndsAt = null;
+      room.message = "☀️ เช้าวันใหม่ - โปรดพูดคุยและโหวต";
+      sendState(room);
+    }, 6000);
+  }
+
+  // Diseased บล็อกหมาป่า และสุดท้ายคืนนี้ไม่มีผู้เสียชีวิต
+  if (room.diseasedBlockedThisNight && nightDead.length === 0) {
+    io.to(room.code).emit("noDeathResult", { type: "night" });
+  }
+  room.diseasedBlockedThisNight = false;
+
+  sendState(room);
+  broadcast(room, "nightResult", {
+    phase: room.phase, deaths: room.deaths.slice(-10),
+    notes, message: room.message
+  });
+}
+
+function afterNightMemorial(room) {
+  console.log("AFTER MEMORIAL BEFORE:", {phase:room.phase, afterMemorialPhase:room.afterMemorialPhase, pendingHunter:room.pendingHunter, winner:room.winner, alive:[...room.players.values()].filter(p=>p.alive).map(p=>({name:p.name,role:p.role}))});
+  let next = room.afterMemorialPhase || "day";
+  if (next !== "hunter") room.afterHunterPhase = null;
+
+  // Hunter ที่ยังมีสิทธิ์ยิง ต้องได้ยิงก่อนตัดสินผู้ชนะ
+  if (room.pendingHunter) {
+    next = "hunter";
+    room.winner = null;
+  } else if (checkWinner(room)) {
+    next = "gameover";
+  }
+
+  room.memorialDeaths = [];
+  room.memorialEndsAt = null;
+  room.afterMemorialPhase = null;
+
+  if (next === "hunter") {
+    room.phase = "hunter";
+    room.message = "🏹 นายพรานเสียชีวิต - เลือกคนที่จะยิงภายใน 15 วินาที";
+    startHunterTimer(room);
+    sendState(room);
+    return;
+  }
+
+  if (next === "gameover") {
+    room.phase = "gameover";
+    console.log("🏆 SENDING GAMEOVER:", {
+      phase: room.phase,
+      winner: room.winner
+    });
+    sendState(room);
+    return;
+  }
+
+  if (next === "night") {
+    startNight(room);
+    return;
+  }
+
+  room.phase = "day";
+  room.votes = {};
+  room.dayEndsAt = null;
+  room.message = "☀️ เช้าวันใหม่ — โปรดพูดคุยและโหวต";
+
+
+  sendState(room);
+}
+
+function getWolfVoteSummary(room) {
+  // สมาชิกทีมหมาป่าที่ต้องร่วมเลือกเหยื่อในคืนนี้
+  const wolves = [...room.players.values()].filter(p =>
+    p.alive && isWolf(p.role)
+  );
+
+  const choices = wolves.map(w => {
+    const action = room.actions[w.id];
+    const target = action?.type === "wolf"
+      ? room.players.get(action.target)
+      : null;
+
+    return {
+      id: w.id,
+      name: w.name,
+      targetId: target?.id || null,
+      targetName: target?.name || null
+    };
+  });
+
+  const selected = choices.filter(x => x.targetId);
+
+  // ต้องเลือกครบทุกตัว และเป้าหมายต้องเป็นคนเดียวกัน
+  const unanimous =
+    wolves.length > 0 &&
+    selected.length === wolves.length &&
+    new Set(selected.map(x => x.targetId)).size === 1;
+
+  return {
+    choices,
+    selectedCount: selected.length,
+    wolfCount: wolves.length,
+    unanimous,
+    targetId: unanimous ? selected[0].targetId : null,
+    targetName: unanimous ? selected[0].targetName : null
+  };
+}
+
+function allNightActionsDone(room) {
+  const needed = [...room.players.values()].filter(
+    p => p.alive && availableActions(room, p).length
+  );
+
+  // ทุกคนที่มีหน้าที่กลางคืน ต้องส่ง Action ที่ถูกต้องแล้ว
+  for (const p of needed) {
+    const allowed = availableActions(room, p);
+    const action = room.actions[p.id];
+
+    if (!action) return false;
+
+    // Huntress กด "ไม่ใช้พลังคืนนี้" = ทำ Action คืนนี้เสร็จแล้ว
+    if (p.role === "Huntress" && action.type === "huntressSkip") {
+      continue;
+    }
+
+    if (!allowed.includes(action.type)) return false;
+  }
+
+  // ตรวจการเลือกเป้าหมายของทีมหมาป่า
+  const wolfSummary = getWolfVoteSummary(room);
+
+  if (wolfSummary.wolfCount > 0) {
+
+    // คืนโบนัสลูกหมาป่า: หมาป่าทุกตัวต้องส่ง 2 เป้าหมายเดียวกัน
+    if (room.wolfCubBonus && !room.diseasedBlocked) {
+      const wolfActions = [...room.players.values()]
+        .filter(p => p.alive && isWolf(p.role))
+        .map(p => room.actions[p.id]);
+
+      if (wolfActions.length === 0) return false;
+
+      // ทุกตัวต้องเลือกครบ 2 คน
+      if (wolfActions.some(a =>
+        !a || a.type !== "wolf" || !a.a || !a.b || a.a === a.b
+      )) return false;
+
+      // หมาป่าทุกตัวต้องเลือกคู่เป้าหมายเดียวกัน
+      const first = [wolfActions[0].a, wolfActions[0].b].sort().join("|");
+
+      if (!wolfActions.every(a =>
+        [a.a, a.b].sort().join("|") === first
+      )) return false;
+
+    } else {
+      // คืนปกติ: หมาป่าทุกตัวต้องเลือกคนเดียวกัน
+      if (!wolfSummary.unanimous) return false;
+    }
+  }
+
+  return true;
+}
+
+io.on("connection", socket => {
+  // Used by the browser to detect a stale room after restart/republish.
+  socket.on("checkRoom", ({ code }, cb) => {
+    code = String(code || "").trim().toUpperCase();
+    cb({ ok: rooms.has(code) });
+  });
+
+  socket.on("createRoom", ({ name }, cb) => {
+    name = String(name || "").trim().slice(0, 24);
+    if (!name) return cb({ error: "กรุณาใส่ชื่อผู้เล่น" });
+    let code; do { code = rid(); } while (rooms.has(code));
+    const room = newRoom(code, socket.id);
+    rooms.set(code, room);
+    room.players.set(socket.id, { id: socket.id, name, alive: true });
+    socket.join(code);
+    cb({ ok: true, code });
+    sendState(room);
+  });
+
+  socket.on("joinRoom", ({ code, name }, cb) => {
+    code = String(code || "").trim().toUpperCase();
+    name = String(name || "").trim().slice(0, 24);
+
+    const room = rooms.get(code);
+    if (!room) return cb({ error: "ไม่พบห้องนี้" });
+    if (!name) return cb({ error: "กรุณาใส่ชื่อผู้เล่น" });
+
+    // หา Player ชื่อเดิมที่หลุดและกำลังรอ reconnect
+    const oldEntry = [...room.players.entries()].find(
+      ([id, p]) => p.name.toLowerCase() === name.toLowerCase()
+    );
+
+    if (oldEntry) {
+      const [oldId, oldPlayer] = oldEntry;
+
+    // Auto-Rejoin: ให้ Socket ใหม่เข้ามาแทน Socket เก่าตอน Refresh
+    if (oldId !== socket.id && io.sockets.sockets.has(oldId)) {
+      const oldSocket = io.sockets.sockets.get(oldId);
+      if (oldSocket) oldSocket.leave(code);
+    }
+      // ย้ายข้อมูล Player เดิมมายัง Socket ใหม่
+      room.players.delete(oldId);
+
+      oldPlayer.id = socket.id;
+      room.players.set(socket.id, oldPlayer);
+    room.lovers = (room.lovers || []).map(id => id === oldId ? socket.id : id);
+
+// Reconnect: ย้าย reference จาก Socket ID เก่า -> Socket ID ใหม่
+if (room.pendingHunter === oldId) room.pendingHunter = socket.id;
+if (room.direCompanion === oldId) room.direCompanion = socket.id;
+if (room.lastGuardTarget === oldId) room.lastGuardTarget = socket.id;
+
+if (room.actions && Object.prototype.hasOwnProperty.call(room.actions, oldId)) {
+  room.actions[socket.id] = room.actions[oldId];
+  delete room.actions[oldId];
+}
+
+if (room.votes && Object.prototype.hasOwnProperty.call(room.votes, oldId)) {
+  room.votes[socket.id] = room.votes[oldId];
+  delete room.votes[oldId];
+}
+
+// target ที่เก็บอยู่ใน action/vote ก็ต้องเปลี่ยน ID ด้วย
+for (const action of Object.values(room.actions || {})) {
+  if (!action) continue;
+  if (action.target === oldId) action.target = socket.id;
+  if (action.a === oldId) action.a = socket.id;
+  if (action.b === oldId) action.b = socket.id;
+}
+
+for (const voterId of Object.keys(room.votes || {})) {
+  if (room.votes[voterId] === oldId) room.votes[voterId] = socket.id;
+}
+
+if (room.huntressUsed?.has(oldId)) {
+  room.huntressUsed.delete(oldId);
+  room.huntressUsed.add(socket.id);
+}
+
+      // ถ้าคนที่กลับมาเป็น HOST ให้คืน HOST
+      if (room.hostId === oldId) {
+        room.hostId = socket.id;
+      }
+
+      socket.join(code);
+      cb({ ok: true, code, reconnected: true });
+      sendState(room);
+      return;
+    }
+
+    // คนใหม่เข้าไม่ได้หลังเกมเริ่ม
+    if (room.started)
+      return cb({ error: "เกมเริ่มแล้ว ไม่สามารถเข้าร่วมรอบนี้ได้" });
+
+    if (room.players.size >= MAX_PLAYERS)
+      return cb({ error: "ห้องเต็มแล้ว" });
+
+    room.players.set(socket.id, {
+      id: socket.id,
+      name,
+      alive: true
+    });
+
+    socket.join(code);
+    cb({ ok: true, code });
+    sendState(room);
+  });
+
+  socket.on("setRoles", ({ roleCounts }, cb) => {
+    const room = [...rooms.values()].find(r => r.players.has(socket.id));
+    if (!room || room.hostId !== socket.id) return cb({ error: "เฉพาะ HOST เท่านั้น" });
+    if (room.started) return cb({ error: "เกมเริ่มแล้ว" });
+    const cleaned = {};
+    for (const [role, n] of Object.entries(roleCounts || {})) {
+      if (ROLE_INFO[role]) {
+        const count = Math.max(0, Math.min(15, Number(n) || 0));
+        if (count) cleaned[role] = count;
+      }
+    }
+    const total = Object.values(cleaned).reduce((a,b)=>a+b,0);
+    if (total !== room.players.size) return cb({ error: `จำนวน Role (${total}) ต้องเท่ากับจำนวนผู้เล่น (${room.players.size})` });
+    room.roleCounts = cleaned;
+    cb({ ok: true });
+    sendState(room);
+  });
+
+  socket.on("startGame", ({ roleCounts }, cb) => {
+    console.log("=== START GAME RECEIVED ===", socket.id, roleCounts);
+    // Host อาจมี socket.id ใหม่หลัง reconnect
+    // หา room จาก hostId ก่อน แล้วค่อย fallback จาก players
+    const room =
+      [...rooms.values()].find(r => r.hostId === socket.id) ||
+      [...rooms.values()].find(r => r.players.has(socket.id));
+
+    if (!room || room.hostId !== socket.id)
+      return cb({ error: "เฉพาะ HOST เท่านั้น" });
+    const cleaned = {};
+    for (const [role, n] of Object.entries(roleCounts || {})) {
+      if (ROLE_INFO[role]) cleaned[role] = Math.max(0, Math.min(15, Number(n) || 0));
+    }
+    const total = Object.values(cleaned).reduce((a,b)=>a+b,0);
+    if (room.players.size < 2) return cb({ error: "ต้องมีผู้เล่นอย่างน้อย 2 คน" });
+    if (total !== room.players.size) return cb({ error: `จำนวน Role (${total}) ต้องเท่ากับผู้เล่น (${room.players.size})` });
+    room.roleCounts = cleaned;
+    // เกมใหม่ = ล้างแชทเก่าทั้งหมด
+  room.globalChat = [];
+  room.wolfChat = [];
+
+  room.started = true;
+    room.winner = null;
+    // เพิ่มเลขรอบเกมทุกครั้งที่ HOST เริ่มเกม
+    room.gameRound = (room.gameRound || 0) + 1;
+
+    assignRoles(room);
+    startNight(room);
+    if (typeof cb === "function") cb({ ok: true });
+  });
+
+  socket.on("nightAction", ({ type, target, a, b }, cb) => {
+    const room = [...rooms.values()].find(r => r.players.has(socket.id));
+    const p = room?.players.get(socket.id);
+    if (!room || !p) return cb({ error: "ไม่พบผู้เล่น" });
+    if (room.phase !== "night" || !p.alive) return cb({ error: "ตอนนี้ไม่สามารถทำ Action ได้" });
+
+    const allowed = availableActions(room, p);
+    if (!allowed.includes(type)) return cb({ error: "คุณไม่มีความสามารถนี้ในตอนนี้" });
+
+    if (type === "huntressSkip") {
+    if (p.role !== "Huntress")
+      return cb({ error: "เฉพาะพรานหญิงเท่านั้น" });
+
+    room.actions[p.id] = { type: "huntressSkip" };
+
+    cb({ ok: true });
+
+    if (allNightActionsDone(room)) resolveNight(room);
+    else sendState(room);
+
+    return;
+  }
+
+  if (type === "cupid") {
+      if (a === b) return cb({ error: "ต้องเลือกคนละ 2 คน" });
+      if (!aliveById(room,a) || !aliveById(room,b)) return cb({ error: "เป้าหมายไม่ถูกต้อง" });
+  // WolfCub Bonus: คืนถัดไปหมาป่าเลือกฆ่า 2 คน
+  if (type === "wolf" && room.wolfCubBonus) {
+    if (!a || !b || a === b) {
+      return cb({ error: "คืนนี้หมาป่าต้องเลือกเป้าหมาย 2 คน" });
+    }
+
+    const ta = aliveById(room, a);
+    const tb = aliveById(room, b);
+
+    if (!ta || !tb) {
+      return cb({ error: "เป้าหมายไม่ถูกต้อง" });
+    }
+
+room.actions[p.id] = { type, a, b };
+
+    cb({ ok: true });
+
+    if (allNightActionsDone(room)) resolveNight(room);
+    else sendState(room);
+
+    return;
+  }
+
+    } else if (type === "companion" || type === "wolf" || type === "seer" || type === "guard" || type === "huntress") {
+      const t = aliveById(room, target);
+      if (!t) return cb({ error: "เป้าหมายไม่ถูกต้อง" });
+
+      // Guard สามารถป้องกันตัวเองได้
+      // Action อื่นยังคงห้ามเลือกตัวเอง
+      if (type !== "guard" && t.id === p.id)
+        return cb({ error: "เป้าหมายไม่ถูกต้อง" });
+    if (type === "wolf" && isWolf(t.role))
+      return cb({ error: "หมาป่า เลือกฆ่าสมาชิกทีมหมาป่าด้วยกันไม่ได้" });
+      if (type === "guard" && target === room.lastGuardTarget) return cb({ error: "ห้ามป้องกันคนเดิมติดต่อกัน" });
+    }
+
+    // Seer ตรวจได้เพียง 1 คนต่อคืน
+    // ถ้าส่งผลตรวจไปแล้ว ห้ามเปลี่ยนเป้าหมายหรือตรวจซ้ำในคืนเดียวกัน
+    if (type === "seer" && room.actions[p.id]?.type === "seer") {
+      return cb({ error: "Seer ตรวจได้เพียง 1 คนต่อคืน" });
+    }
+
+    if(type==="cupid" && room.actions[p.id]?.type==="cupid")
+      return cb({error:"กามเทพเลือกคู่รักไปแล้ว"});
+
+    if (type === "companion") {
+      // เฉพาะ DireWolf เท่านั้น
+      if (p.role !== "DireWolf")
+        return cb({ error: "เฉพาะหมาป่าโลกันตร์เท่านั้น" });
+
+      // เลือก Companion ได้เพียงครั้งเดียวตลอดเกม
+      if (room.direCompanion)
+        return cb({ error: "เลือก Companion ไปแล้ว" });
+
+      // ห้ามเลือกตัวเอง
+      if (!t || t.id === p.id)
+        return cb({ error: "เป้าหมายไม่ถูกต้อง" });
+
+      // บันทึกทันที เพื่อให้ปุ่มหายหลังเลือก
+      room.direCompanion = t.id;
+      cb({ ok: true });
+      sendState(room);
+      return;
+    }
+
+    room.actions[p.id] = { type, target, a, b };
+
+      // Cupid: บันทึกคู่รักทันทีหลังยืนยัน
+      if (type === "cupid") {
+        room.lovers = [a, b];
+      }
+
+    if (type === "seer") {
+      const t = room.players.get(target);
+      let seen = t?.role;
+
+      // คนเมา: คืนแรก Seer ยังไม่เห็นบทจริง
+      // ตั้งแต่คืนที่ 2 จึงตรวจตาม trueRole
+      if (t?.wasDrunk) {
+      // คืน 1 เห็นเป็น Drunk
+      // ตั้งแต่คืน 2 เป็นต้นไป เห็น Role จริง
+      seen = room.night >= 2 ? t.trueRole : "Drunk";
+    }
+
+      socket.emit("privateResult", {
+        type: "seer",
+        target: t.name,
+        isWolf: isWolf(seen)
+      });
+    }
+
+    cb({ ok: true });
+
+    if (allNightActionsDone(room)) resolveNight(room);
+    else sendState(room);
+  });
+
+  
+function finishDayVote(room) {
+  // ป้องกันการสรุปซ้ำ
+  if (!room || room.phase !== "day") return;
+  const dayDeathStart = room.deaths.length;
+
+  const tally = {};
+
+  // นับเฉพาะ Vote ที่มีอยู่
+  for (const targetId of Object.values(room.votes || {})) {
+    const target = aliveById(room, targetId);
+    if (target) {
+      tally[targetId] = (tally[targetId] || 0) + 1;
+    }
+  }
+
+  const scores = Object.values(tally);
+
+  // มีคนโหวตอย่างน้อย 1 คน
+  if (scores.length > 0) {
+    const max = Math.max(...scores);
+
+    const winners = Object.entries(tally)
+      .filter(([, n]) => n === max)
+      .map(([id]) => id);
+
+    // ประหารเฉพาะกรณีคะแนนสูงสุดมีคนเดียว
+    if (winners.length === 1) {
+      const out = room.players.get(winners[0]);
+
+      if (out && out.alive) {
+        if (out.role === "Tanner") {
+          out.tannerWon = true;
+          room.winner = "Tanner";
+        } else {
+          const before = out.role;
+          const ds = kill(room, out.id, "Vote");
+          room.deaths.push(...ds);
+
+      }
+    }
+  }
+  }
+
+  room.votes = {};
+  room.dayEndsAt = null;
+
+  // หลังโหวต ถ้ามีผู้เสียชีวิต ให้แสดง Memorial ก่อน
+  const voteDead = room.deaths.slice(dayDeathStart);
+
+  if (voteDead.length > 0) {
+    const nextAfterMemorial = room.pendingHunter
+      ? "hunter"
+      : (checkWinner(room) ? "gameover" : "night");
+
+    if (room.pendingHunter) room.afterHunterPhase = "night";
+
+    room.afterMemorialPhase = nextAfterMemorial;
+    startMemorial(room, voteDead);
+    room.phase = "memorial";
+    room.message = "🗳️ ผลโหวตประหาร";
+    sendState(room);
+    return;
+  }
+
+  // ไม่มีผู้เล่นถูกประหาร เช่น โหวตเสมอ / ไม่มีผลโหวต
+  if (voteDead.length === 0) {
+    io.to(room.code).emit("noDeathResult", { type: "vote" });
+  }
+
+  if (room.pendingHunter) {
+    console.log("HUNTER SERVER DEBUG", {
+      pendingHunter: room.pendingHunter,
+      phase: room.phase,
+      players: [...room.players.values()].map(p => ({
+        id:p.id, name:p.name, role:p.role, alive:p.alive
+      }))
+    });
+    room.phase = "hunter";
+    room.message = "🏹 นายพรานเสียชีวิต – เลือกคนที่จะยิง";
+    sendState(room);
+  } else {
+    // ไม่มีผู้เสียชีวิตจากการโหวต:
+    // รอ Popup ผลโหวตให้จบก่อน แล้ว Winner ต้องเป็น Popup สุดท้าย
+    setTimeout(() => {
+      if (!room.started || room.phase !== "day") return;
+
+      if (checkWinner(room)) {
+        room.phase = "gameover";
+        sendState(room);
+        return;
+      }
+
+      startNight(room);
+    }, 6000);
+  }
+}
+
+socket.on("vote", ({ target }, cb) => {
+  const room = [...rooms.values()].find(r => r.players.has(socket.id));
+  const p = room?.players.get(socket.id);
+
+  if (!room || !p)
+    return cb({ error: "ไม่พบผู้เล่น" });
+
+  console.log("VOTE DEBUG:", {name:p.name, alive:p.alive, phase:room.phase, socket:socket.id});
+  if (room.phase !== "day" || !p.alive)
+    return cb({ error: "ตอนนี้ไม่สามารถโหวตได้" });
+
+  // หมดเวลาแล้ว ไม่รับ Vote เพิ่ม
+  if (room.dayEndsAt && Date.now() >= room.dayEndsAt)
+    return cb({ error: "หมดเวลาโหวตแล้ว" });
+
+  const t = aliveById(room, target);
+
+  if (!t || t.id === p.id)
+    return cb({ error: "โหวตเป้าหมายไม่ถูกต้อง" });
+
+  // 1 คน มีสิทธิ์โหวตเพียง 1 ครั้งต่อ DAY
+  // แม้ Refresh / ออกแล้วกลับเข้ามาใหม่ ก็โหวตซ้ำไม่ได้
+  if (Object.prototype.hasOwnProperty.call(room.votes || {}, p.id)) {
+    return cb({ error: "คุณใช้สิทธิ์โหวตในรอบนี้แล้ว" });
+  }
+
+  room.votes[p.id] = target;
+
+  cb({ ok: true });
+    // ส่งผลโหวตล่าสุดให้ผู้เล่นทุกคนทันที
+    sendState(room);
+
+  const voters = [...room.players.values()].filter(alive);
+
+  // ทุกคน Vote ครบ → สรุปทันที
+  if (voters.every(v => room.votes[v.id])) {
+    finishDayVote(room);
+    return;
+  }
+
+  sendState(room);
+});
+
+socket.on("hunterShot", ({ target }, cb) => {
+    const room = [...rooms.values()].find(r => r.players.has(socket.id));
+
+    if (!room || room.phase !== "hunter" || room.pendingHunter !== socket.id)
+        return cb({ error: "ไม่มีสิทธิ์" });
+
+    const t = aliveById(room, target);
+
+    if (!t || t.id === socket.id)
+        return cb({ error: "เป้าหมายไม่ถูกต้อง" });
+
+    // นายพรานคนปัจจุบันใช้สิทธิแล้ว
+    // ล้างก่อน kill() เพื่อให้ถ้ายิงโดนนายพรานอีกคน
+    // kill() สามารถตั้ง pendingHunter เป็นนายพรานคนถัดไปได้
+    room.pendingHunter = null;
+
+    const ds = kill(room, t.id, "Hunter");
+    room.deaths.push(...ds);
+
+    cb({ ok: true });
+
+    // Hunter ยิงแล้วมีคนตาย -> ต้อง Memorial ก่อนเสมอ
+    if (ds.length > 0) {
+      const nextAfterMemorial = room.pendingHunter
+        ? "hunter"
+      : (checkWinner(room) ? "gameover" : (room.afterHunterPhase || "day"));
+
+      room.afterMemorialPhase = nextAfterMemorial;
+      startMemorial(room, ds);
+      room.phase = "memorial";
+      room.message = "🕯️ ขอร่วมไว้อาลัยแด่ผู้จากไป";
+      sendState(room);
+    room.resolvingNight = false;
+    return;
+    }
+
+    // ถ้ามีนายพรานอีกคนตายจากกระสุน
+    // ให้ยิงต่อก่อนตรวจผู้ชนะ
+    if (room.pendingHunter) {
+        room.winner = null;
+        room.phase = "hunter";
+        room.message = "🏹 นายพรานเสียชีวิต - เลือกคนที่จะยิง";
+        sendState(room);
+        return;
+    }
+
+    // ไม่มีนายพรานยิงต่อแล้ว จึงค่อยตัดสินผลเกม
+    if (checkWinner(room)) {
+        room.phase = "gameover";
+        room.dayEndsAt = null;
+        sendState(room);
+        return;
+    }
+
+  if (room.afterHunterPhase === "night") { startNight(room); return; } else { room.phase = "day";
+    room.votes = {};
+    room.dayEndsAt = null;
+    room.message = "☀️ นายพรานยิงแล้ว - เข้าสู่ช่วงพูดคุยและโหวต";
+
+    sendState(room);
+  }
+});
+
+socket.on("continueMemorial", cb => {
+  const room = [...rooms.values()].find(r => r.players.has(socket.id));
+
+  if (!room)
+    return cb({ error: "ไม่พบห้อง" });
+
+  if (room.hostId !== socket.id)
+    return cb({ error: "เฉพาะ HOST เท่านั้น" });
+
+  if (room.phase !== "memorial")
+    return cb({ error: "ตอนนี้ไม่ได้อยู่ในช่วงไว้อาลัย" });
+
+  cb({ ok: true });
+
+  // Popup ผู้เสียชีวิตจบแล้ว เว้น 1 วิ ก่อนเข้า Phase ถัดไป
+  setTimeout(() => {
+    if (room.phase !== "memorial") return;
+    afterNightMemorial(room);
+  }, 0);
+});
+
+socket.on("newRound", cb => {
+    const room = [...rooms.values()].find(r => r.players.has(socket.id));
+    if (!room || room.hostId !== socket.id) return cb({ error: "เฉพาะ HOST เท่านั้น" });
+    resetRound(room);
+    cb({ ok: true });
+    sendState(room);
+  });
+
+  socket.on("leaveGame", (cb) => {
+    const room = [...rooms.values()].find(r => r.players.has(socket.id));
+
+    if (!room) {
+      if (typeof cb === "function") cb({ ok: true });
+      return;
+    }
+
+    const wasHost = room.hostId === socket.id;
+
+    // ถ้าระบบกำลังรอนายพรานคนนี้ยิง แต่เจ้าตัวกดออก
+    // ให้ยกเลิกสิทธิ์ยิง เพื่อไม่ให้เกมค้าง
+    const leavingPendingHunter =
+      room.phase === "hunter" &&
+      room.pendingHunter === socket.id;
+
+    if (leavingPendingHunter) {
+      room.pendingHunter = null;
+    }
+
+    room.players.delete(socket.id);
+
+    // ถ้าคนที่ออกเป็น HOST ให้ส่ง HOST ต่อให้คนถัดไป
+    if (wasHost && room.players.size > 0) {
+      room.hostId = room.players.values().next().value.id;
+    }
+
+    // ถ้าไม่มีผู้เล่นเหลือแล้ว ลบห้อง
+    if (room.players.size === 0) {
+      rooms.delete(room.code);
+    } else {
+      // นายพรานที่กำลังรอยิงออกจากเกม -> ข้ามการยิง
+      if (leavingPendingHunter) {
+        if (checkWinner(room)) {
+          room.phase = "gameover";
+          room.dayEndsAt = null;
+          room.message = "🏹 นายพรานออกจากเกม จึงข้ามการยิง";
+          sendState(room);
+        } else {
+          startNight(room);
+        }
+
+      // ผู้เล่นที่กดออก ถูกลบแล้ว จึงไม่มีสิทธิ์ Vote/Action อีก
+      } else
+      // ตรวจผู้เล่นที่เหลือเพื่อให้เกมเดินต่อได้ทันที
+
+      if (room.phase === "night" && allNightActionsDone(room)) {
+        resolveNight(room);
+
+      } else if (room.phase === "day") {
+        const voters = [...room.players.values()].filter(alive);
+
+        if (
+          voters.length > 0 &&
+          voters.every(v =>Object.prototype.hasOwnProperty.call(room.votes || {}, v.id))
+        ) {
+          finishDayVote(room);
+        } else {
+          sendState(room);
+        }
+
+      } else {
+        sendState(room);
+      }
+    }
+
+    if (typeof cb === "function") cb({ ok: true });
+  });
+
+  // ===== GLOBAL CHAT =====
+socket.on("globalChatSend", ({ message } = {}, cb) => {
+  const room = [...rooms.values()].find(r => r.players.has(socket.id));
+  if (!room) return cb?.({ error: "ไม่พบห้อง" });
+
+  const player = room.players.get(socket.id);
+  if (!player) return cb?.({ error: "ไม่พบผู้เล่น" });
+
+  // ผู้เล่นที่ตายแล้ว อ่านแชทได้ แต่ส่งข้อความไม่ได้
+  if (!player.alive) {
+    return cb?.({ error: "💀 คุณเสียชีวิตแล้ว สามารถอ่านแชทได้เท่านั้น" });
+  }
+
+  message = String(message || "").trim().slice(0, 300);
+  if (!message) return cb?.({ error: "ข้อความว่าง" });
+
+  const msg = {
+    id: crypto.randomBytes(6).toString("hex"),
+    playerId: player.id,
+    name: player.name,
+    message,
+    time: Date.now()
+  };
+
+  room.globalChat ||= [];
+  room.globalChat.push(msg);
+
+  if (room.globalChat.length > 100) {
+    room.globalChat = room.globalChat.slice(-100);
+  }
+
+  // ส่งให้ผู้เล่นทุกคนในห้อง
+  for (const p of room.players.values()) {
+    io.to(p.id).emit("globalChatMessage", msg);
+  }
+
+  cb?.({ ok: true });
+});
+
+socket.on("globalChatGet", (cb) => {
+  const room = [...rooms.values()].find(r => r.players.has(socket.id));
+  if (!room) return cb?.({ error: "ไม่พบห้อง" });
+
+  cb?.({
+    ok: true,
+    messages: room.globalChat || []
+  });
+});
+
+// ===== WOLF CHAT =====
+  socket.on("wolfChatSend", ({ message } = {}, cb) => {
+    const room = [...rooms.values()].find(r => r.players.has(socket.id));
+    if (!room) return cb?.({ error: "ไม่พบห้อง" });
+
+    const player = room.players.get(socket.id);
+    if (!canUseWolfChat(player)) {
+      return cb?.({ error: "ไม่มีสิทธิ์ใช้แชทหมาป่า" });
+    }
+
+    message = String(message || "").trim().slice(0, 300);
+    if (!message) return cb?.({ error: "ข้อความว่าง" });
+
+    const msg = {
+      id: crypto.randomBytes(6).toString("hex"),
+      playerId: player.id,
+      name: player.name,
+      message,
+      time: Date.now()
+    };
+
+    room.wolfChat ||= [];
+    room.wolfChat.push(msg);
+
+    if (room.wolfChat.length > 100) {
+      room.wolfChat = room.wolfChat.slice(-100);
+    }
+
+    // ส่งเฉพาะผู้เล่นที่มีสิทธิ์เห็น Wolf Chat
+    for (const p of room.players.values()) {
+      if (canUseWolfChat(p)) {
+        io.to(p.id).emit("wolfChatMessage", msg);
+      }
+    }
+
+    cb?.({ ok: true });
+  });
+
+  socket.on("wolfChatGet", (cb) => {
+    const room = [...rooms.values()].find(r => r.players.has(socket.id));
+    if (!room) return cb?.({ error: "ไม่พบห้อง" });
+
+    const player = room.players.get(socket.id);
+    if (!canUseWolfChat(player)) {
+      return cb?.({ error: "ไม่มีสิทธิ์ใช้แชทหมาป่า" });
+    }
+
+    cb?.({
+      ok: true,
+      messages: room.wolfChat || []
+    });
+  });
+
+  socket.on("disconnect", () => {
+    for (const [code, room] of rooms) {
+      if (!room.players.has(socket.id)) continue;
+
+      const oldSocketId = socket.id;
+
+      setTimeout(() => {
+        const r = rooms.get(code);
+        if (!r) return;
+
+        // ถ้ายังเป็นผู้เล่นคนเดิมและยังไม่ได้ reconnect ให้ลบหลัง 3 นาที
+        if (r.players.has(oldSocketId)) {
+        const disconnectedPendingHunter =
+          r.phase === "hunter" &&
+          r.pendingHunter === oldSocketId;
+
+        if (disconnectedPendingHunter) {
+          r.pendingHunter = null;
+        }
+
+          r.players.delete(oldSocketId);
+
+          if (r.hostId === oldSocketId) {
+            const next = r.players.values().next().value;
+            if (next) r.hostId = next.id;
+          }
+
+          if (r.players.size === 0) {
+            rooms.delete(code);
+          } else {
+            sendState(r);
+          }
+        }
+      }, 180000);
+    }
+  });
+});
+
+server.listen(PORT, "0.0.0.0", () => console.log(`Werewolf server running on http://localhost:${PORT}`));
+const socket = io();
+const $ = id => document.getElementById(id);
+const roles = {
+  Villager:["👨‍🌾","ชาวบ้าน"],Seer:["🔮","ผู้หยั่งรู้"],Bodyguard:["🛡️","ผู้คุ้มกัน"],
+  Hunter:["🏹","นายพราน"],Cupid:["💘","กามเทพ"],Tanner:["🤡","ยาจก"],
+  Diseased:["🦠","ผู้ติดโรค"],Huntress:["🏹","พรานหญิง"],Drunk:["🍺","คนเมา"],
+  Werewolf:["🐺","มนุษย์หมาป่า"],WolfCub:["🐺","ลูกหมาป่า"],DireWolf:["🐺","หมาป่าโลกันตร์"]
+};
+
+const roleImages = {
+  Villager: "/images/roles/villager.png",
+  Seer: "/images/roles/seer.png",
+  Bodyguard: "/images/roles/bodyguard.png",
+  Hunter: "/images/roles/hunter.png",
+  Cupid: "/images/roles/cupid.png",
+  Tanner: "/images/roles/tanner.png",
+  Diseased: "/images/roles/diseased.png",
+  Huntress: "/images/roles/huntress.png",
+  Drunk: "/images/roles/drunk.png",
+  Werewolf: "/images/roles/werewolf.png",
+  WolfCub: "/images/roles/wolfcub.png",
+  DireWolf: "/images/roles/direwolf.png"
+};
+
+let me=null, state=null, counts={};
+
+function show(id){["home","lobby","game"].forEach(x=>$(x).classList.toggle("hidden",x!==id));}
+function err(el,msg){$(el).textContent=msg||""}
+function connect(action,payload){
+  socket.emit(action,payload,(res)=>{
+    if(!res?.ok) err("homeMsg",res?.error||"เกิดข้อผิดพลาด");
+      if(res?.ok && (action==="createRoom" || action==="joinRoom")){
+        localStorage.setItem("ww_name", payload.name || "");
+        localStorage.setItem("ww_room", res.code || payload.code || "");
+      }
+  });
+}
+$("createBtn").onclick=()=>connect("createRoom",{name:$("name").value});
+$("joinBtn").onclick=()=>connect("joinRoom",{name:$("name").value,code:$("roomCode").value});
+$("copyBtn").onclick=()=>navigator.clipboard?.writeText(state.room);
+$("newRoundBtn").onclick=()=>socket.emit("newRound",r=>{if(!r.ok)alert(r.error)});
+
+
+// ===== GAME BACKGROUND MUSIC =====
+let currentGameMusic = "";
+let gameMusicDelayTimer = null;
+
+function updateGameMusic(s){
+  // ถ้าเสียง Popup เช้า/กลางคืนกำลังเล่น ห้ามเพลงพื้นหลังแทรก
+  if (phasePopupSoundActive) return;
+
+  const bgm = document.getElementById("gameBgm");
+  if(!bgm || !s) return;
+
+  let file = "";
+
+  // Lobby / รอ HOST / รอผู้เล่น
+  if(!s.started){
+    file = "/audio/WereWolf Theme.mp3";
+  }
+  // กลางคืน
+  else if(s.phase === "night"){
+    file = "/audio/Night Falls.mp3";
+  }
+  // กลางวัน
+  else if(s.phase === "day"){
+    file = "/audio/Morning After.mp3";
+  }
+  else{
+    return;
+  }
+
+  if(currentGameMusic === file) return;
+
+  // ยกเลิก Timer เพลงเก่าก่อน
+  if (gameMusicDelayTimer) {
+    clearTimeout(gameMusicDelayTimer);
+    gameMusicDelayTimer = null;
+  }
+
+  // กลางวัน/กลางคืน รอ 7 วินาที เพื่อให้เสียง Popup เล่นก่อน
+  if (s.started && (s.phase === "day" || s.phase === "night")) {
+    gameMusicDelayTimer = setTimeout(() => {
+      currentGameMusic = file;
+      bgm.src = file;
+      bgm.loop = true;
+      bgm.volume = 0.45;
+      bgm.play().catch(()=>{});
+      gameMusicDelayTimer = null;
+    }, 0);
+
+    return;
+  }
+
+  // Lobby เล่นตามปกติ ไม่ต้องรอ
+  currentGameMusic = file;
+  bgm.src = file;
+  bgm.loop = true;
+  bgm.volume = 0.45;
+
+  bgm.play().catch(()=>{
+    // มือถือบางเครื่องจะยังไม่อนุญาตเสียง
+    // จนกว่าผู้เล่นจะแตะหน้าจอครั้งแรก
+  });
+}
+
+document.addEventListener("pointerdown", ()=>{
+  const bgm = document.getElementById("gameBgm");
+  if(bgm && bgm.paused && currentGameMusic){
+    bgm.play().catch(()=>{});
+  }
+}, {passive:true});
+
+socket.on("state",s=>{
+  const previousPhase = state?.phase || null;
+  const previousNight = state?.night || 0;
+
+  state=s; me=s.me;
+
+  // RESET ROLE CARD EVERY NEW ROUND
+  if (
+    previousPhase === "gameover" &&
+    s.phase === "lobby" &&
+    !s.started
+  ) {
+    const roleCard = document.getElementById("roleFlipCard");
+    if (roleCard) {
+    roleCard.classList.add("role-card-hidden");
+    document.querySelectorAll(".secret-role-mark").forEach(el => {
+      el.style.display = "none";
+    });
+  }
+  }
+
+// เริ่มเกม / เริ่มรอบใหม่ ให้คว่ำการ์ด Role อัตโนมัติ
+if (
+  s.started &&
+  (previousPhase === null || previousPhase === "lobby")
+) {
+  const roleCard = document.getElementById("roleFlipCard");
+  if (roleCard) {
+    roleCard.classList.add("role-card-hidden");
+    document.querySelectorAll(".secret-role-mark").forEach(el => {
+      el.style.display = "none";
+    });
+  }
+}
+
+  // กลับ Lobby / เริ่มรอบใหม่ -> รีเซ็ต Popup Phase
+  // เพื่อให้ Night 1 ของเกมรอบใหม่แสดง Popup อีกครั้ง
+  if (!s.started || s.phase === "lobby") {
+  lastPhasePopupKey = null;
+
+  // Reset Action UI state ก่อนเริ่มรอบใหม่
+  window.selectedPlayerId = null;
+  window.playerCardAction = null;
+  window.cupidSelectedIds = [];
+
+  document.querySelectorAll("#gamePlayers .player").forEach(card => {
+    card.classList.remove("selectable-player", "selected-player", "guard-disabled");
+    card.onclick = null;
+    card.title = "";
+  });
+
+  const actionsEl = document.getElementById("actions");
+  if (actionsEl) actionsEl.innerHTML = "";
+
+  const actionTitleEl = document.getElementById("actionTitle");
+  if (actionTitleEl) actionTitleEl.textContent = "";
+}
+
+  // ===== DAY / NIGHT PHASE POPUP TRIGGER =====
+if (s.started) {
+  const phaseKey =
+    s.phase === "night"
+      ? `night-${s.night || 0}`
+      : s.phase === "day"
+        ? `day-${s.night || 0}`
+        : null;
+
+  if (phaseKey) {
+    const savedPhaseKey = sessionStorage.getItem("ww_phase_key");
+
+    // ถ้า Refresh แล้วกลับมา Phase เดิม -> ไม่เปิด Popup ซ้ำ
+    if (
+      previousPhase === null &&
+      savedPhaseKey === phaseKey
+    ) {
+      lastPhasePopupKey = phaseKey;
+    }
+
+    // เริ่มเกมใหม่ หรือเปลี่ยน Day/Night จริง -> เปิด Popup 1 ครั้ง
+    else if (
+      phaseKey !== lastPhasePopupKey &&
+      phaseKey !== savedPhaseKey
+    ) {
+      lastPhasePopupKey = phaseKey;
+      sessionStorage.setItem("ww_phase_key", phaseKey);
+      showPhasePopup(s.phase, s.night || 0);
+    }
+  }
+} else {
+  // อยู่ Lobby = เตรียมให้ Night 1 ของเกมใหม่เปิด Popup ได้
+  sessionStorage.removeItem("ww_phase_key");
+  lastPhasePopupKey = null;
+}
+// ===== END PHASE POPUP TRIGGER =====
+
+  // ถ้าเริ่มรอบใหม่ ให้ปิดหน้าสรุปเกมเก่าของผู้เล่นทุกคน
+if (s.phase !== "gameover") {
+  document.getElementById("gameOverPopup")?.remove();
+}
+
+// GAME OVER ต้องแสดงผลทันที
+  if (s.phase === "gameover") {
+    show("game");
+    setTimeout(() => renderGameOver(), 100);
+    return;
+  }
+
+  // ===== GLOBAL CHAT : คนตายอ่านได้ แต่พิมพ์ไม่ได้ =====
+  const globalChatInput = $("globalChatInput");
+  const globalChatSendBtn = $("globalChatSendBtn");
+
+  if (globalChatInput && globalChatSendBtn) {
+    const canSendGlobalChat = !!me?.alive;
+
+    globalChatInput.disabled = !canSendGlobalChat;
+    globalChatSendBtn.disabled = !canSendGlobalChat;
+
+    globalChatInput.placeholder = canSendGlobalChat
+      ? "พิมพ์ข้อความ..."
+      : "💀 คุณเสียชีวิตแล้ว — อ่านแชทได้เท่านั้น";
+  }
+
+  // เกมจบ / กลับ Lobby = ล้าง Wolf Chat เก่าออกจากหน้าจอ
+  if (!s.started) {
+    const wolfChatMessages = $("wolfChatMessages");
+    const wolfChatMsg = $("wolfChatMsg");
+    const wolfChatInput = $("wolfChatInput");
+
+    if (wolfChatMessages) wolfChatMessages.innerHTML = "";
+    if (wolfChatMsg) wolfChatMsg.textContent = "";
+    if (wolfChatInput) wolfChatInput.value = "";
+  }
+
+  // แสดง Wolf Chat เฉพาะผู้เล่นที่ Server อนุญาต
+  const wolfChatCard = $("wolfChatCard");
+  if (wolfChatCard) {
+    wolfChatCard.classList.toggle("hidden", !me?.canWolfChat);
+  }
+
+  // ถ้าเป็นการเปลี่ยน Day/Night ที่มี Phase Popup
+  // ให้เสียง Popup เล่นก่อน แล้วค่อยเปิดเพลงพื้นหลังเมื่อเสียง Popup จบ
+  const phasePopupSound =
+    s.phase === "night"
+      ? document.getElementById("wolfHowlSound")
+      : s.phase === "day"
+      ? document.getElementById("roosterSound")
+      : null;
+
+  if (phasePopupSound && !phasePopupSound.paused && !phasePopupSound.ended) {
+    phasePopupSound.addEventListener("ended", () => {
+      updateGameMusic(s);
+    }, { once: true });
+  } else {
+    updateGameMusic(s);
+  }
+
+  if(!s.started){
+    renderLobby();
+    show("lobby");
+  } else {
+    renderGame();
+    show("game");
+
+    // โหลดแชทใหญ่ของห้องนี้
+    loadGlobalChatHistory();
+  }
+});
+
+function renderLobby(){
+  $("room").textContent=state.room;$("bigCode").textContent=state.room;
+  $("playerCount").textContent=state.players.length;
+  $("roleNeed").textContent=state.players.length;
+  $("players").innerHTML=state.players.map(p=>`<div class="player ${p.alive?'':'dead'}"><span>${p.name}</span>${p.isHost?'<span class="hosttag">HOST</span>':''}</div>`).join("");
+  const host=state.hostId===me.id;
+  $("hostPanel").classList.toggle("hidden",!host);$("waitPanel").classList.toggle("hidden",host);
+  if(host) renderRoles();
+}
+function renderRoles(){
+  const order=Object.keys(roles);
+
+  $("roles").innerHTML=order.map(r=>{
+    const [emoji,name]=roles[r], n=counts[r]||0;
+    const image=roleImages[r];
+
+    return `
+      <div class="role role-card ${n>0 ? 'role-selected' : ''}">
+        <div class="role-image-box">
+          <img class="role-select-image" src="${image}" alt="${name}">
+          ${n>0 ? `<div class="role-count-badge">×${n}</div>` : ''}
+        </div>
+        <div class="role-select-info">
+          <div class="role-select-name">${name}</div>
+          <small class="muted">${r}</small>
+          <div class="counter role-select-counter">
+            <button onclick="changeRole('${r}',-1)">−</button>
+            <span>${n}</span>
+            <button onclick="changeRole('${r}',1)">+</button>
+          </div>
+        </div>
+      </div>
+    `;
+  }).join("");
+
+  $("roleTotal").textContent=
+    Object.values(counts).reduce((a,b)=>a+b,0);
+}
+
+window.changeRole=(r,d)=>{counts[r]=Math.max(0,Math.min(15,(counts[r]||0)+d));renderRoles()};
+$("startBtn").onclick=()=>{
+  console.log("START GAME CLICK", {
+    counts: counts,
+    totalRoles: Object.values(counts).reduce((a,b)=>a+b,0),
+    players: state?.players?.length
+  });
+
+  socket.emit("startGame",{roleCounts:counts},r=>{
+    console.log("START GAME RESPONSE", r);
+    if(!r?.ok) {
+      alert("START GAME ERROR: " + (r?.error || "Unknown error"));
+      err("hostMsg",r?.error || "Unknown error");
+    }
+  });
+};
+
+function closeDeathPopup(){
+  // ปิด Popup ผู้เสียชีวิตเท่านั้น
+  // การเดิน Phase ต่อให้ Server เป็นผู้ควบคุม
+  document.getElementById("deathPopup")?.remove();
+}
+
+function showDeathPopup(names){
+  document.getElementById("deathPopup")?.remove();
+
+  // เสียงประกาศผู้เสียชีวิต
+  const deathSound = new Audio("/sounds/death-bell.mp3");
+  deathSound.volume = 0.8;
+  deathSound.play().catch(()=>{});
+ let d=document.createElement("div");
+ d.id="deathPopup";
+ d.innerHTML=`<div class="deathBox">🕯️<h2>${names.join("<br>")}</h2><b>ได้เสียชีวิตแล้ว</b><p>โปรดไว้อาลัยแด่ผู้เสียชีวิต</p><p id="deathTime">ปิดอัตโนมัติใน 5 วินาที</p><button onclick="closeDeathPopup()">ปิด</button></div>`;
+ document.body.appendChild(d);
+ let t=5;
+ let x=setInterval(()=>{
+  t--;
+  let e=document.getElementById("deathTime");
+  if(e)e.textContent=`ปิดอัตโนมัติใน ${t} วินาที`;
+  if(t<=0){
+      clearInterval(x);
+      closeDeathPopup();
+      }
+ },1000);
+}
+
+
+function showNoDeathPopup(type){
+  document.getElementById("noDeathPopup")?.remove();
+
+  // เสียงประกาศไม่มีผู้เสียชีวิต
+  const noDeathSound = new Audio("/sounds/death-bell.mp3");
+  noDeathSound.volume = 0.8;
+  noDeathSound.play().catch(()=>{});
+
+  const isNight = type === "night";
+  const icon = isNight ? "🌙" : "🗳️";
+  const title = isNight
+    ? "คืนนี้ไม่มีผู้เสียชีวิต"
+    : "ไม่มีผู้เสียชีวิตจากการประหาร";
+
+  const d=document.createElement("div");
+  d.id="noDeathPopup";
+  d.className="deathPopup";
+
+
+  d.innerHTML=`
+    <div class="deathBox">
+      <button
+        onclick="closeNoDeathPopup()"
+        style="position:absolute;right:14px;top:10px;border:0;background:transparent;font-size:26px;cursor:pointer"
+      >✕</button>
+
+      <div style="font-size:48px">${icon}</div>
+      <h2>${title}</h2>
+
+      <p>Popup จะปิดใน
+        <b id="noDeathTime">5</b>
+        วินาที
+      </p>
+
+      <button class="primary full" onclick="closeNoDeathPopup()">
+        ปิด
+      </button>
+    </div>
+  `;
+
+  document.body.appendChild(d);
+
+  let t=5;
+
+  const timer=setInterval(()=>{
+    t--;
+
+    const el=document.getElementById("noDeathTime");
+    if(el) el.textContent=t;
+
+    if(t<=0){
+      clearInterval(timer);
+      closeNoDeathPopup();
+    }
+  },1000);
+}
+
+function closeNoDeathPopup(){
+  document.getElementById("noDeathPopup")?.remove();
+}
+
+function renderMemorial(){
+  const names = state.memorialDeaths || [];
+  const key = names.join("|");
+  const now = Date.now();
+
+  // fallback: ถ้า deathResult ยังไม่ได้เปิด Popup จึงค่อยเปิดจาก memorial
+  if (names.length > 0 &&
+      !(key === lastDeathPopupKey && now - lastDeathPopupAt < 7000)) {
+    lastDeathPopupKey = key;
+    lastDeathPopupAt = now;
+    showDeathPopup(names);
+  }
+  $("phaseTitle").textContent="🕯️ ไว้อาลัย";
+  $("gameMsg").textContent="ขอร่วมไว้อาลัยแด่ผู้จากไป";
+
+  $("actions").innerHTML=(state.memorialDeaths||[])
+    .map(name=>`<div class="notice">🕯️ <b>${name}</b></div>`)
+    .join("");
+
+
+}
+
+function renderGame(){
+  $("phaseTitle").textContent=state.phase==="night"?"🌙 NIGHT":state.phase==="day"?"☀️ DAY":state.phase==="hunter"?"🏹 HUNTER":"🏆 GAME OVER";
+  $("nightNo").textContent=state.night?` ${state.night}`:"";
+  $("newRoundBtn").classList.toggle("hidden",state.hostId!==me.id || state.phase!=="gameover");
+    const wolfTeam = state.wolfTeam || [];
+    const wolfTeamHtml = wolfTeam.length
+      ? `<div class="wolf-team-box">
+          <div class="wolf-team-title">🐺 ทีมหมาป่า</div>
+          <div class="wolf-team-list">
+            ${wolfTeam.map(w=>`
+              <div class="wolf-team-member ${w.id===me.id?'is-me':''} ${w.alive?'':'is-dead'}">
+                <span>🐺 ${w.name}</span>
+                <span>${w.id===me.id?'คุณ':(w.alive?'🟢':'💀')}</span>
+              </div>
+            `).join("")}
+          </div>
+          <div class="wolf-team-note">ไม่เปิดเผยว่าใครเป็นหมาป่าประเภทใด</div>
+        </div>`
+      : "";
+
+    $("myRole").innerHTML=`
+      <div class="myrole">
+        <div class="roleImageWrap"><img class="roleImage" src="${roleImages[me.role] || ''}" alt="${roles[me.role]?.[1] || me.role}"></div>
+      <div class="rolePlayerName">👤 ${me.name}</div>
+        <div class="roleTitle">${roles[me.role]?.[1] || me.role}${me.wasDrunk && me.role !== "Drunk" ? " (Drunk)" : ""}</div>
+        <div class="faction">${me.faction}</div>
+        ${me.role==="Drunk"&&state.night<2
+          ? '<div class="notice">🍺 คุณยังไม่รู้บทที่แท้จริงจนกว่าจะถึงคืนที่ 2</div>'
+          : ''}
+        ${wolfTeamHtml}
+      </div>`;
+  const voteSummary = state.voteSummary;
+$("gamePlayers").innerHTML=state.players.map(p=>{
+  const votes = voteSummary?.tally?.[p.id] || 0;
+  const voteBadge = state.phase==="day" && p.alive
+    ? `<div class="vote-badge ${votes>0?'has-votes':''}">🗳️ ${votes} โหวต</div>`
+    : "";
+
+  const roleCardHidden =
+    document.getElementById("roleFlipCard")?.classList.contains("role-card-hidden");
+
+  let secretMarks = "";
+
+  if (!roleCardHidden) {
+
+    // 💘 Cupid
+    if (
+      me.role === "Cupid" &&
+      (state.cupidLovers || []).includes(p.id)
+    ) {
+      secretMarks += " 💘";
+    }
+
+    const action = state.myNightAction;
+
+    if (action) {
+
+      // 🐾 หมาป่าเลือกฆ่า
+      if (
+        action.type === "wolf" &&
+        (
+          action.target === p.id ||
+          action.a === p.id ||
+          action.b === p.id
+        )
+      ) {
+        secretMarks += " 🐾";
+      }
+
+      // 🛡️ Bodyguard
+      if (
+        action.type === "guard" &&
+        action.target === p.id
+      ) {
+        secretMarks += " 🛡️";
+      }
+
+      // 🔮 Seer
+      if (
+        action.type === "seer" &&
+        action.target === p.id
+      ) {
+        secretMarks += " 🔮";
+      }
+
+      // 🎯 Huntress
+      if (
+        action.type === "huntress" &&
+        action.target === p.id
+      ) {
+        secretMarks += " 🎯";
+      }
+
+      // 🔗 DireWolf เลือกผูก
+      if (
+        me.role === "DireWolf" &&
+        action.type === "companion" &&
+        action.target === p.id
+      ) {
+        secretMarks += " 🔗";
+      }
+    }
+
+    // 🔗 DireWolf ที่ผูกไว้จากคืนก่อน
+    if (
+      me.role === "DireWolf" &&
+      state.direCompanion === p.id &&
+      !secretMarks.includes("🔗")
+    ) {
+      secretMarks += " 🔗";
+    }
+  }
+
+  const hasVoted = state.phase === "day" &&
+      voteSummary?.votedPlayerIds?.includes(p.id);
+
+    return `<div class="player ${p.alive?'':'dead'} ${hasVoted?'voted':''}">
+    <span>${p.name}<span class="secret-role-mark">${secretMarks}</span></span>
+    <span>${p.isHost?'👑 ':''}${p.alive?'🟢':'💀'}</span>
+    ${voteBadge}
+  </div>`;
+}).join("");
+
+  let voteProgress=document.getElementById("voteProgress");
+  if(state.phase==="day" && voteSummary){
+    if(!voteProgress){
+      voteProgress=document.createElement("div");
+      voteProgress.id="voteProgress";
+      $("gamePlayers").before(voteProgress);
+    }
+    voteProgress.innerHTML=`✅ ยืนยันโหวตแล้ว <b>${voteSummary.votedCount}</b> / <b>${voteSummary.voterCount}</b> คน`;
+  }else if(voteProgress){
+    voteProgress.remove();
+  }
+  $("actions").innerHTML="";
+
+  if(state.phase==="gameover"){
+    $("phaseTitle").textContent="";
+    $("nightNo").textContent="";
+    $("gameMsg").textContent="";
+    $("actions").innerHTML="";
+    renderGameOver();
+    return;
+  }
+  if(state.phase==="memorial"){renderMemorial();return}
+  if(state.phase!=="memorial") window.memorialLocalStart=null;
+  if(state.phase==="hunter"){renderHunter();return}
+  if(state.phase==="night"){renderNight();return}
+  if(state.phase==="day"){renderDay();return}
+}
+
+function candidates(excludeSelf=true){
+  return state.players.filter(p=>p.alive&&(!excludeSelf||p.id!==me.id));
+}
+function buttonsForPlayers(cb){
+  $("actions").innerHTML=candidates().map(p=>`<button class="target" onclick="${cb}('${p.id}')">${p.name}</button>`).join("");
+}
+
+function renderWolfVoteStatus() {
+  const summary = state.wolfVoteSummary;
+  if (!summary || !summary.wolfCount) return "";
+
+  const rows = summary.choices.map(w => `
+    <div class="wolf-vote-row">
+      <span class="wolf-voter">🐺 ${w.name}</span>
+      <span class="wolf-arrow">➜</span>
+      <span class="${w.targetName ? 'wolf-target' : 'wolf-waiting'}">
+        ${w.targetName ? w.targetName : 'ยังไม่เลือก'}
+      </span>
+    </div>
+  `).join("");
+
+  let status = "";
+
+  if (summary.unanimous) {
+    status = `
+      <div class="wolf-vote-status agreed">
+        ✅ ทีมหมาป่าเลือก <b>${summary.targetName}</b> ตรงกันแล้ว
+      </div>`;
+  } else if (summary.selectedCount === 0) {
+    status = `
+      <div class="wolf-vote-status waiting">
+        🕐 รอทีมหมาป่าเลือกเหยื่อ
+      </div>`;
+  } else {
+    status = `
+      <div class="wolf-vote-status disagree">
+        ⚠️ เลือกแล้ว ${summary.selectedCount} / ${summary.wolfCount} คน<br>
+        ทีมหมาป่าต้องเลือกเหยื่อคนเดียวกัน
+      </div>`;
+  }
+
+  return `
+    <div class="wolf-vote-box">
+      <div class="wolf-vote-title">🩸 การเลือกเหยื่อของทีม</div>
+      ${rows}
+      ${status}
+      <div class="wolf-vote-help">
+        สามารถเปลี่ยนเป้าหมายได้จนกว่าทีมจะเลือกตรงกัน
+      </div>
+    </div>`;
+}
+
+function renderNight(){
+  // เข้า Night: ล้าง Vote UI และ Reminder จากกลางวันทันที
+  $("actions").innerHTML="";
+  if (typeof cancelDayVoteReminder === "function") cancelDayVoteReminder();
+  document.getElementById("dayVoteReminderPopup")?.remove();
+
+  $("actionTitle").textContent="🌙 ความสามารถของคุณ";
+  const wolfVoteHtml = renderWolfVoteStatus();
+
+  // ใช้ Action สำเร็จแล้ว -> ซ่อนปุ่มทันที
+  // ยกเว้น Wolf Team เพราะอนุญาตให้เปลี่ยนเป้าหมายได้
+  const isWolfAction =
+    me.role === "Werewolf" ||
+    me.role === "WolfCub" ||
+    me.role === "DireWolf" ||
+    (me.role === "Drunk" &&
+      ["Werewolf","WolfCub","DireWolf"].includes(me.trueRole) &&
+      state.night >= 2);
+
+  if (state.myNightAction && !isWolfAction) {
+    $("actions").innerHTML = "";
+    if (typeof cancelRoleActionReminder === "function") {
+      cancelRoleActionReminder();
+    }
+    document.getElementById("roleActionReminderPopup")?.remove();
+    return;
+  }
+  if(!me.alive){$("actions").innerHTML='<div class="notice">คุณเสียชีวิตแล้ว รอดูเกมต่อได้</div>';return}
+  if(me.role==="Villager"||me.role==="Tanner"||me.role==="Diseased"||me.role==="Hunter"||(me.role==="Drunk"&&state.night<2)){
+    $("actions").innerHTML='<div class="notice">คืนนี้คุณไม่มี Action ที่ต้องทำ</div>';return;
+  }
+  if(me.role==="Cupid"&&state.night===1){
+    if((state.cupidLovers||[]).length===2){
+      $("actions").innerHTML='<div class="notice">💘 เลือกคู่รักเรียบร้อยแล้ว</div>';
+      return;
+    }
+
+    setupCupidCardSelection();
+    return;
+  }
+
+  if(me.role==="DireWolf" && state.night===1 && !state.direCompanion){
+  $("actionTitle").textContent="🐺 เลือก Companion";
+  setupPlayerCardSelection("companion","เลือก Companion จากรายชื่อผู้เล่น","✓ ยืนยัน Companion");
+  return;
+}
+    if(
+      me.role==="Werewolf" ||
+      me.role==="WolfCub" ||
+      me.role==="DireWolf" ||
+      (
+        me.role==="Drunk" &&
+        ["Werewolf","WolfCub","DireWolf"].includes(me.trueRole) &&
+        state.night>=2
+      )
+    ){
+      $("actionTitle").textContent="🐺 เลือก เหยื่อ";
+
+      setupPlayerCardSelection(
+        "wolf",
+        "เลือก เหยื่อจากรายชื่อผู้เล่น",
+        "✓ ยืนยัน เป้าหมาย"
+      );
+
+      // แสดงว่าเพื่อนหมาป่าแต่ละคนเลือกใคร
+      $("actions").insertAdjacentHTML("afterbegin", wolfVoteHtml);
+      return;
+    }
+
+  if(me.role==="Seer"){if(state.seerDone){$("actions").innerHTML='<div class="notice">🔮 ตรวจสอบเรียบร้อยแล้ว</div>';return;}
+    $("actionTitle").textContent="🔮 ตรวจสอบ 1 คน";
+    setupPlayerCardSelection("seer","เลือกผู้เล่นที่ต้องการตรวจสอบ","✓ ยืนยันการตรวจ");return;
+  }
+  if(me.role==="Bodyguard"){
+    $("actionTitle").textContent="🛡️ ปกป้อง 1 คน";
+
+    if(state.guardDone){
+      $("actions").innerHTML='<div class="notice">🛡️ ยืนยันการปกป้องเรียบร้อยแล้ว<br>⏳ รอผู้เล่นอื่นดำเนินการ...</div>';
+      return;
+    }
+
+    setupPlayerCardSelection(
+      "guard",
+      "เลือกผู้เล่นที่ต้องการปกป้อง",
+      "✓ ยืนยันการปกป้อง"
+    );
+    return;
+  }
+  if(me.role==="Huntress"){
+    $("actionTitle").textContent="🏹 พรานหญิง";
+
+    // พรานหญิงยิงได้เพียง 1 ครั้งตลอดทั้งเกม
+    if(state.huntressUsed){
+      $("actions").innerHTML='<div class="notice">🏹 คุณใช้ความสามารถยิงไปแล้ว</div>';
+      return;
+    }
+
+    $("actionTitle").textContent="🏹 พรานหญิง — จะใช้พลังคืนนี้หรือไม่?";
+    $("actions").innerHTML='<button class="primary" onclick="chooseHuntress()">ใช้พลัง</button><button onclick="skipAction()">ไม่ใช้คืนนี้</button>';
+    return;
+  }
+}
+function act(type,data={}){
+  socket.emit("nightAction",{type,...data},r=>{
+    if(!r.ok){
+      alert(r.error);
+      return;
+    }
+
+    // Action สำเร็จ -> หยุดการเตือนทันที
+    if (typeof cancelRoleActionReminder === "function") {
+      cancelRoleActionReminder();
+    }
+    document.getElementById("roleActionReminderPopup")?.remove();
+
+    // Wolf ต้องสามารถเปลี่ยนเป้าหมายได้
+    // รอ state ล่าสุดจาก Server แล้ว render ใหม่
+    if(type==="wolf"){
+      return;
+    }
+
+    $("actions").innerHTML=
+      '<div class="notice">✅ บันทึก Action แล้ว รอผู้เล่นคนอื่น...</div>';
+  });
+}
+window.submitWolf=id=>act("wolf",{target:id});
+window.submitSeer=id=>act("seer",{target:id});
+window.submitGuard=id=>act("guard",{target:id});
+window.submitCompanion=id=>act("companion",{target:id});
+window.chooseHuntress=()=>{setupPlayerCardSelection("huntress","เลือกเป้าหมายจากรายชื่อผู้เล่น","✓ ยืนยันเป้าหมาย")};
+window.submitHuntress=id=>act("huntress",{target:id});
+window.pickCup=id=>{if(!window.cupA)window.cupA=id;else if(window.cupA!==id)window.cupB=id;document.querySelectorAll("#cup .target").forEach(b=>b.classList.remove("selected"));if(window.cupA)$("cup-"+window.cupA)?.classList.add("selected");if(window.cupB)$("cup-"+window.cupB)?.classList.add("selected")};
+window.submitCupid=()=>{if(!window.cupA||!window.cupB)return alert("เลือก 2 คนก่อน");act("cupid",{a:window.cupA,b:window.cupB})};
+window.skipAction=()=>{ $("actions").innerHTML='<div class="notice">คืนนี้ไม่ใช้พลัง</div>' };
+
+
+function renderDay(){
+  // Vote UI ใช้ได้เฉพาะกลางวันเท่านั้น
+  if (!state || state.phase !== "day") {
+    $("actions").innerHTML="";
+    return;
+  }
+
+  $("actionTitle").textContent="☀️ โหวตประหาร";
+  scheduleDayVoteReminder();
+  console.log("DAY DEBUG", {phase:state.phase, me:me, candidates:candidates().map(p=>({id:p.id,name:p.name,alive:p.alive}))});
+  $("gameMsg").textContent=state.message||"พูดคุยกับผู้เล่นแล้วเลือก 1 คน";
+  if(!me.alive){$("actions").innerHTML='<div class="notice">คุณเสียชีวิตแล้ว</div>';return}
+  if(state.voteSummary?.myVoted){
+    $("actions").innerHTML=`<div class="notice">✅ คุณใช้สิทธิ์โหวตในรอบนี้แล้ว<br>⏳ รอผู้เล่นคนอื่นโหวตให้ครบ</div>`;
+    return;
+  }
+  setupPlayerCardSelection("vote","เลือกผู้เล่นที่ต้องการโหวตออก","✓ ยืนยันการโหวต");
+}
+window.votePlayer=id=>socket.emit("vote",{target:id},r=>{
+  if(!r.ok){
+    alert(r.error);
+    return;
+  }
+
+  if(state.voteSummary){
+    state.voteSummary.myVoted=true;
+  }
+    // โหวตสำเร็จแล้ว -> หยุดการเตือนทันที
+    if (typeof cancelDayVoteReminder === "function") cancelDayVoteReminder();
+    document.getElementById("dayVoteReminderPopup")?.remove();
+
+  $("actions").innerHTML=`<div class="notice">✅ คุณใช้สิทธิ์โหวตในรอบนี้แล้ว<br>⏳ รอผู้เล่นคนอื่นโหวตให้ครบ</div>`;
+});
+
+function renderHunter(){
+  $("actionTitle").textContent="🏹 นายพราน";
+  $("actions").innerHTML="";
+
+  const myId=me?.id;
+  const hunterId=state.pendingHunter;
+
+  const hunterLeft = state.hunterEndsAt
+    ? Math.max(0, Math.ceil((state.hunterEndsAt - Date.now()) / 1000))
+    : 15;
+
+  if(!myId || !hunterId || myId !== hunterId){
+    $("actions").innerHTML='<div class="notice">🏹 รอนายพรานเลือกเป้าหมาย...</div>';
+    return;
+  }
+
+  // นายพรานตายแล้ว แต่ยังมีสิทธิ์เลือกยิงคนที่ยังมีชีวิต
+  const hunterWarning = hunterLeft <= 3
+    ? `⚠️ เหลือ ${hunterLeft} วินาที! หากไม่ยิง ระบบจะเลือกยิงให้อัตโนมัติ`
+    : `⏳ เหลือเวลา ${hunterLeft} วินาที หากไม่ยิง ระบบจะเลือกยิงให้อัตโนมัติ`;
+
+  $("actions").innerHTML =
+    `<div id="hunterCountdown" class="notice">${hunterWarning}</div>`;
+
+  setupPlayerCardSelection(
+    "hunter",
+    "เลือกผู้เล่นที่นายพรานต้องการยิง",
+    "🏹 ยืนยันการยิง"
+  );
+
+  clearInterval(window.hunterCountdownTimer);
+
+  window.hunterCountdownTimer = setInterval(() => {
+    if (!state || state.phase !== "hunter") {
+      clearInterval(window.hunterCountdownTimer);
+      return;
+    }
+
+    const left = state.hunterEndsAt
+      ? Math.max(0, Math.ceil((state.hunterEndsAt - Date.now()) / 1000))
+      : 0;
+
+    const el = document.getElementById("hunterCountdown");
+    if (!el) return;
+
+    if (left <= 3 && left > 0) {
+      el.innerHTML = `⚠️ เหลือ ${left} วินาที! หากไม่ยิง ระบบจะเลือกยิงให้อัตโนมัติ`;
+    } else if (left > 0) {
+      el.innerHTML = `⏳ เหลือเวลา ${left} วินาที หากไม่ยิง ระบบจะเลือกยิงให้อัตโนมัติ`;
+    } else {
+      el.innerHTML = "🎯 หมดเวลา! ระบบกำลังเลือกเป้าหมายยิงอัตโนมัติ...";
+      clearInterval(window.hunterCountdownTimer);
+    }
+  }, 250);
+}
+
+window.shoot=id=>socket.emit("hunterShot",{target:id},r=>{if(!r.ok)alert(r.error)});
+
+function escapeHtml(value){
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+function renderGameOver(){
+  console.log("GAMEOVER DEBUG:", {phase: state.phase, winner: state.winner, gameSummary: state.gameSummary});
+  const actionCard=document.getElementById("actionCard");
+  if(actionCard) actionCard.style.display="none";
+
+  const map={
+    Village:"🏆 ฝ่ายชาวบ้านชนะ",
+    Werewolf:"🐺 ฝ่ายหมาป่าชนะ",
+    Tanner:"🤡 ยาจกชนะ",
+    Draw:"🤝 เสมอกัน — ไม่มีผู้รอดชีวิตทั้ง 2 ฝ่าย",
+  };
+
+  $("actionTitle").textContent="";
+  $("actions").innerHTML="";
+  $("gameMsg").textContent="";
+
+  // ลบ popup เก่าก่อน ป้องกันซ้ำ
+  document.getElementById("gameOverPopup")?.remove();
+
+  const d=document.createElement("div");
+  d.id="gameOverPopup";
+  d.className="deathPopup";
+
+  // ===== GAME OVER : PLAYER ROLE SUMMARY =====
+  const summary = Array.isArray(state.gameSummary)
+    ? state.gameSummary
+    : [];
+
+  const roleSummaryHTML = summary.length
+    ? `
+      <div style="
+        margin:16px 0 14px;
+        padding:12px;
+        background:rgba(255,255,255,.06);
+        border-radius:12px;
+        text-align:left;
+        max-height:300px;
+        overflow-y:auto;
+      ">
+        <div style="
+          font-weight:800;
+          text-align:center;
+          margin-bottom:10px;
+          font-size:17px;
+        ">📋 สรุปบทบาทผู้เล่น</div>
+
+        ${summary.map(p => `
+          <div style="
+            display:flex;
+            align-items:center;
+            justify-content:space-between;
+            gap:10px;
+            padding:8px 4px;
+            border-bottom:1px solid rgba(255,255,255,.08);
+          ">
+            <span style="font-weight:700;">
+              ${p.alive ? "❤️" : "💀"} ${p.alive
+  ? escapeHtml(p.name)
+  : `<span style="text-decoration:line-through; opacity:.65;">${escapeHtml(p.name)}</span>`
+}
+            </span>
+
+            <span style="text-align:right;">
+              ${p.emoji || "🎭"} ${escapeHtml(p.roleName || p.role)}
+              ${
+                p.role === "Drunk" && p.trueRoleName
+                  ? `<br><small>↳ บทจริง: ${p.trueRoleEmoji || "🎭"} ${escapeHtml(p.trueRoleName)}</small>`
+                  : ""
+              }
+            </span>
+          </div>
+        `).join("")}
+      </div>
+    `
+    : "";
+
+  d.innerHTML=`
+    <div class="deathBox">
+      <div style="font-size:42px">🏆</div>
+      <h1 style="margin:10px 0">GAME OVER</h1>
+      <h2>${map[state.winner] || state.winner}</h2>
+      <p>เกมจบแล้ว</p>
+      ${roleSummaryHTML}
+      ${
+        state.hostId===me.id
+        ? '<button class="primary full" onclick="newRound()">🔄 เริ่มเกมใหม่</button>'
+        : '<p>⏳ รอ HOST เริ่มเกมใหม่</p>'
+      }
+    </div>
+  `;
+
+  document.body.appendChild(d);
+}
+window.newRound=()=>socket.emit("newRound",r=>{
+  if(!r.ok){
+    alert(r.error);
+    return;
+  }
+  document.getElementById("gameOverPopup")?.remove();
+
+  // รอบใหม่: ล้าง Role ที่ HOST เลือกจากรอบก่อนทั้งหมด
+  Object.keys(counts).forEach(role => counts[role] = 0);
+
+  const actionCard=document.getElementById("actionCard");
+  if(actionCard) actionCard.style.display="";
+});
+socket.on("privateResult",r=>{
+  if(r.type==="seer"){
+    $("private").innerHTML=`<div class="notice">🔮 ผลการตรวจ<br><br>${r.target}<br><b>${r.isWolf?"🐺 ฝ่ายหมาป่า":"🏡 ฝ่ายชาวบ้าน"}</b></div>`;
+  }
+});
+socket.on("noDeathResult",r=>{
+  if(r && r.type==="vote"){
+    showNoDeathPopup("vote");
+  } else if(r && r.type==="night"){
+    showNoDeathPopup("night");
+  }
+});
+
+let lastDeathPopupKey = "";
+let lastDeathPopupAt = 0;
+
+socket.on("deathResult", r => {
+  if (!r || !Array.isArray(r.names) || r.names.length === 0) return;
+
+  const key = r.names.join("|");
+  const now = Date.now();
+
+  // กัน Popup ซ้ำจาก deathResult + renderMemorial
+  if (key === lastDeathPopupKey && now - lastDeathPopupAt < 7000) return;
+
+  lastDeathPopupKey = key;
+  lastDeathPopupAt = now;
+
+  showDeathPopup(r.names);
+});
+
+socket.on("nightResult",r=>{
+  $("gameMsg").textContent=r.message||"";
+
+  // คืนนี้ไม่มีผู้เสียชีวิต
+  if(Array.isArray(r.deaths) && r.deaths.length===0){
+    showNoDeathPopup("night");
+  }
+});
+
+
+// Connection safety: a room shown on screen may no longer exist after a server
+// restart / republish. Force the client to verify it instead of showing stale UI.
+let lastRoomCode = null;
+socket.on("state", s => { lastRoomCode = s.room || lastRoomCode; });
+
+socket.on("disconnect", () => {
+  if (state?.room) {
+    err("homeMsg", "การเชื่อมต่อกับ Server หลุด กรุณารอเชื่อมต่อใหม่");
+  }
+});
+
+socket.on("connect", () => {
+    const savedName = localStorage.getItem("ww_name");
+    const savedRoom = localStorage.getItem("ww_room");
+
+    // พยายามกลับเข้าห้องเดิมอัตโนมัติ
+    if (savedName && savedRoom) {
+        socket.emit("joinRoom", {
+            name: savedName,
+            code: savedRoom
+        }, r => {
+            if (r?.ok) {
+                lastRoomCode = savedRoom;
+                err("homeMsg", "");
+                return;
+            }
+
+            // ห้องถูกลบ/Server restart
+            localStorage.removeItem("ww_room");
+            state = null;
+            me = null;
+            counts = {};
+            show("home");
+            $("roomCode").value = savedRoom;
+            err("homeMsg", r?.error || "ไม่สามารถกลับเข้าห้องเดิมได้");
+        });
+        return;
+    }
+
+    // กรณีไม่มีข้อมูล reconnect
+    if (lastRoomCode && state) {
+        socket.emit("checkRoom", { code: lastRoomCode }, r => {
+            if (!r?.ok) {
+                state = null;
+                me = null;
+                counts = {};
+                show("home");
+                $("roomCode").value = lastRoomCode;
+                err("homeMsg", "ห้องเดิมหมดอายุ กรุณาให้ HOST สร้างห้องใหม่");
+            }
+        });
+    }
+});
+
+// ===== NO GAME COUNTDOWN =====
+
+window.continueMemorial=()=>{
+  socket.emit("continueMemorial",r=>{
+    if(!r?.ok) alert(r?.error||"ไม่สามารถดำเนินเกมต่อได้");
+  });
+};
+
+/* ===== PLAYER CARD ACTION SELECT ===== */
+
+window.selectedPlayerId = null;
+window.playerCardAction = null;
+
+
+/* ===== CUPID : SELECT 2 PLAYERS FROM PLAYER CARDS ===== */
+window.setupCupidCardSelection = function() {
+  window.cupidSelectedIds = [];
+
+  const aliveIds = state.players
+    .filter(p => p.alive)
+    .map(p => p.id);
+
+  document.querySelectorAll("#gamePlayers .player").forEach((card, index) => {
+    const p = state.players[index];
+
+    card.classList.remove("selectable-player", "selected-player");
+    card.onclick = null;
+    card.title = "";
+
+    if (!p || !aliveIds.includes(p.id)) return;
+
+    card.classList.add("selectable-player");
+
+    card.onclick = () => {
+      const id = p.id;
+      const pos = window.cupidSelectedIds.indexOf(id);
+
+      if (pos >= 0) {
+        window.cupidSelectedIds.splice(pos, 1);
+        card.classList.remove("selected-player");
+      } else {
+        if (window.cupidSelectedIds.length >= 2) return;
+
+        window.cupidSelectedIds.push(id);
+        card.classList.add("selected-player");
+      }
+
+      const selected = window.cupidSelectedIds
+        .map(x => state.players.find(z => z.id === x))
+        .filter(Boolean);
+
+      if (selected.length === 0) {
+        $("actions").innerHTML =
+          '<div class="notice player-select-help">💘 เลือกผู้เล่น 2 คนให้เป็นคู่รัก</div>';
+      } else if (selected.length === 1) {
+        $("actions").innerHTML =
+          '<div class="selected-summary">💘 คนที่ 1: <b>' +
+          escapeHtml(selected[0].name) +
+          '</b><br>เลือกคนที่ 2</div>';
+      } else {
+        $("actions").innerHTML =
+          '<div class="selected-summary">💘 คู่รักที่เลือก<br><b>' +
+          escapeHtml(selected[0].name) + ' ❤️ ' +
+          escapeHtml(selected[1].name) +
+          '</b></div>' +
+          '<button class="primary full" onclick="confirmCupidCardSelection()">💘 ยืนยันคู่รัก</button>';
+      }
+    };
+  });
+
+  $("actions").innerHTML =
+    '<div class="notice player-select-help">💘 เลือกผู้เล่น 2 คนให้เป็นคู่รัก</div>';
+};
+
+window.confirmCupidCardSelection = function() {
+  const ids = window.cupidSelectedIds || [];
+
+  if (ids.length !== 2) {
+    return alert("กรุณาเลือกผู้เล่นให้ครบ 2 คน");
+  }
+
+  const a = ids[0];
+  const b = ids[1];
+
+  window.cupidSelectedIds = [];
+  act("cupid", {a, b});
+};
+
+window.setupPlayerCardSelection = function(actionType, title, confirmText) {
+  window.selectedPlayerId = null;
+  window.playerCardAction = actionType;
+
+  // Bodyguard เลือกผู้เล่นที่ยังมีชีวิตทั้งหมด รวมตัวเอง
+  // Action อื่นใช้กติกาเดิม
+  const allowed = actionType === "guard"
+    ? state.players.filter(p => p.alive).map(p => p.id)
+    : actionType === "hunter"
+      ? state.players.filter(p => p.alive && p.id !== me.id).map(p => p.id)
+      : candidates().map(p => p.id);
+
+  document.querySelectorAll("#gamePlayers .player").forEach((card, index) => {
+    const p = state.players[index];
+
+    card.classList.remove(
+      "selectable-player",
+      "selected-player",
+      "guard-disabled"
+    );
+
+    // ล้าง onclick เก่าทุกครั้ง
+    card.onclick = null;
+    card.title = "";
+
+    if (!p || !allowed.includes(p.id)) return;
+
+    // Bodyguard: คนที่ป้องกันเมื่อคืนกดซ้ำไม่ได้
+    if (
+      actionType === "guard" &&
+      p.id === state.lastGuardTarget
+    ) {
+      card.classList.add("guard-disabled");
+      card.title = "ป้องกันผู้เล่นคนนี้เมื่อคืนแล้ว";
+      return;
+    }
+
+    card.classList.add("selectable-player");
+
+    card.onclick = () => {
+      window.selectedPlayerId = p.id;
+
+    // ถ้าเป็นการโหวตกลางวัน ให้อัปเดตปุ่มยืนยันด้านนอกทันที
+    if (window.playerCardAction === "vote") {
+      setTimeout(updateOutsideVoteConfirm, 0);
+    }
+
+      document.querySelectorAll("#gamePlayers .player")
+        .forEach(x => x.classList.remove("selected-player"));
+
+      card.classList.add("selected-player");
+
+      $("actions").innerHTML =
+        `<div class="selected-summary">
+           <span>ผู้เล่นที่เลือก:</span>
+           <b>✓ ${p.name}</b>
+         </div>
+         <button class="primary full" onclick="confirmPlayerCardAction()">
+           ${confirmText || "✓ ยืนยัน"}
+         </button>`;
+    };
+  });
+
+  $("actions").innerHTML =
+    `<div class="notice player-select-help">
+       👆 ${title || "เลือกผู้เล่นจากรายชื่อด้านบน"}
+     </div>`;
+};
+
+window.confirmPlayerCardAction = function() {
+  const id = window.selectedPlayerId;
+
+  if (!id) return alert("กรุณาเลือกผู้เล่นก่อน");
+
+  const action = window.playerCardAction;
+
+  window.selectedPlayerId = null;
+  window.playerCardAction = null;
+
+  if (action === "vote") return votePlayer(id);
+  if (action === "wolf") return submitWolf(id);
+  if (action === "seer") return submitSeer(id);
+  if (action === "guard") return submitGuard(id);
+  if (action === "companion") return submitCompanion(id);
+  if (action === "huntress") return submitHuntress(id);
+  if (action === "hunter") return shoot(id);
+};
+
+/* ===== LIVE VOTE UPDATE FOR ALL PLAYERS ===== */
+socket.on("voteUpdate", summary => {
+  console.log("VOTE UPDATE RECEIVED:", summary);
+
+  alert(
+    "VOTE UPDATE RECEIVED\n" +
+    summary.votedCount + " / " + summary.voterCount
+  );
+
+  if (!state || state.phase !== "day") return;
+
+  state.voteSummary = summary;
+  renderGame();
+});
+
+
+// ===== LEAVE GAME =====
+window.leaveGame = function(){
+  const ok = confirm("🚪 ต้องการออกจากเกมใช่หรือไม่?");
+  if(!ok) return;
+
+  socket.emit("leaveGame", {}, (r)=>{
+    if(r && r.error){
+      alert(r.error);
+      return;
+    }
+
+    // ล้างข้อมูล reconnect ของห้องเก่า
+    localStorage.removeItem("ww_room");
+    localStorage.removeItem("ww_name");
+
+    // ล้าง state ฝั่ง Client ทั้งหมด
+    state = null;
+    me = null;
+    counts = {};
+    lastRoomCode = null;
+
+    window.selectedPlayerId = null;
+    window.playerCardAction = null;
+    window.cupidSelectedIds = [];
+
+    // ล้าง Popup ที่อาจค้าง
+    document.getElementById("gameOverPopup")?.remove();
+    document.getElementById("deathPopup")?.remove();
+    document.getElementById("phasePopup")?.remove();
+
+    // ล้างค่าหน้าสร้าง/เข้าห้อง
+    const roomInput = document.getElementById("roomCode");
+    if(roomInput) roomInput.value = "";
+
+    // กลับหน้า Home โดยไม่ Reload
+    show("home");
+
+    const homeMsg = document.getElementById("homeMsg");
+    if(homeMsg) homeMsg.textContent = "";
+
+    console.log("OK - Left game and client state cleared");
+  });
+};
+
+// ===== WOLF CHAT =====
+function addWolfChatMessage(msg) {
+  const box = $("wolfChatMessages");
+  if (!box || !msg) return;
+
+  const row = document.createElement("div");
+  row.className = "wolf-chat-message";
+
+  const name = document.createElement("span");
+  name.className = "wolf-chat-message-name";
+  name.textContent = (msg.name || "หมาป่า") + ":";
+
+  const text = document.createElement("span");
+  text.textContent = " " + (msg.message || "");
+
+  row.appendChild(name);
+  row.appendChild(text);
+  box.appendChild(row);
+  box.scrollTop = box.scrollHeight;
+}
+
+function sendWolfChat() {
+  const input = $("wolfChatInput");
+  const msgBox = $("wolfChatMsg");
+  if (!input) return;
+
+  const message = input.value.trim();
+  if (!message) return;
+
+  socket.emit("wolfChatSend", { message }, (res) => {
+    if (res?.error) {
+      if (msgBox) msgBox.textContent = res.error;
+      return;
+    }
+
+    input.value = "";
+    if (msgBox) msgBox.textContent = "";
+  });
+}
+
+$("wolfChatSendBtn")?.addEventListener("click", sendWolfChat);
+
+$("wolfChatInput")?.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") {
+    e.preventDefault();
+    sendWolfChat();
+  }
+});
+
+socket.on("wolfChatMessage", (msg) => {
+  addWolfChatMessage(msg);
+});
+
+// โหลดประวัติ Wolf Chat จาก Server
+function loadWolfChatHistory() {
+  if (!me?.canWolfChat) return;
+
+  socket.emit("wolfChatGet", (res) => {
+    if (!res?.ok) return;
+
+    const box = $("wolfChatMessages");
+    if (!box) return;
+
+    box.innerHTML = "";
+    (res.messages || []).forEach(addWolfChatMessage);
+  });
+}
+
+// ===== GLOBAL CHAT CLIENT =====
+
+function addGlobalChatMessage(msg) {
+  const box = $("globalChatMessages");
+  if (!box || !msg) return;
+
+  const row = document.createElement("div");
+  row.className = "wolf-chat-message";
+
+  const name = document.createElement("span");
+  name.className = "wolf-chat-message-name";
+  name.textContent = (msg.name || "ผู้เล่น") + ": ";
+
+  const text = document.createElement("span");
+  text.textContent = " " + (msg.message || "");
+
+  row.appendChild(name);
+  row.appendChild(text);
+  box.appendChild(row);
+  box.scrollTop = box.scrollHeight;
+}
+
+function sendGlobalChat() {
+  const input = $("globalChatInput");
+  const msgBox = $("globalChatMsg");
+  if (!input) return;
+
+  const message = input.value.trim();
+  if (!message) return;
+
+  socket.emit("globalChatSend", { message }, (res) => {
+    if (res?.error) {
+      if (msgBox) msgBox.textContent = res.error;
+      return;
+    }
+
+    input.value = "";
+    if (msgBox) msgBox.textContent = "";
+  });
+}
+
+$("globalChatSendBtn")?.addEventListener("click", sendGlobalChat);
+
+$("globalChatInput")?.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") {
+    e.preventDefault();
+    sendGlobalChat();
+  }
+});
+
+socket.on("globalChatMessage", (msg) => {
+  addGlobalChatMessage(msg);
+});
+
+function loadGlobalChatHistory() {
+  socket.emit("globalChatGet", (res) => {
+    if (!res?.ok) return;
+
+    const box = $("globalChatMessages");
+    if (!box) return;
+
+    box.innerHTML = "";
+    (res.messages || []).forEach(addGlobalChatMessage);
+  });
+}
+
+// ===== DAY / NIGHT PHASE POPUP =====
+let lastPhasePopupKey = null;
+let phasePopupTimer = null;
+
+// ล็อกเพลงพื้นหลังระหว่างเสียง Popup
+let phasePopupSoundActive = false;
+
+function showPhasePopup(type, phaseNo = "") {
+  const popup = document.getElementById("phasePopup");
+  const img = document.getElementById("phasePopupImg");
+  const title = document.getElementById("phasePopupTitle");
+  const countdown = document.getElementById("phasePopupCountdown");
+
+  if (!popup || !img || !title) return;
+
+  const isNight = type === "night";
+
+  img.src = isNight ? "/phase/night.png" : "/phase/day.png";
+  title.textContent = isNight ? "🌙 ราตรีมาเยือน" : "🌅 อรุณรุ่งมาเยือน";
+
+  const sound = document.getElementById(
+    isNight ? "wolfHowlSound" : "roosterSound"
+  );
+
+  // หยุดเสียงของ Phase ก่อนหน้า ก่อนเริ่มเสียงใหม่
+  ["wolfHowlSound", "roosterSound"].forEach(id => {
+    const a = document.getElementById(id);
+    if (a) {
+      a.pause();
+      a.currentTime = 0;
+    }
+  });
+
+  // หยุดเพลง BGM เดิมก่อนเล่นเสียง Popup
+  const bgm = document.getElementById("gameBgm");
+  if (bgm) {
+    bgm.pause();
+    bgm.currentTime = 0;
+  }
+  currentGameMusic = "";
+
+  popup.classList.remove("hidden");
+
+  // Countdown 5 → 4 → 3 → 2 → 1
+  let remaining = 5;
+  if (countdown) countdown.textContent = remaining;
+
+  if (sound) {
+    // ล็อกเพลงพื้นหลังไว้จนกว่าเสียง Popup จะเล่นครบทุกครั้ง
+    phasePopupSoundActive = true;
+
+    const soundFile = isNight
+      ? "/sounds/wolf-howl.mp3"
+      : "/sounds/rooster.mp3";
+
+    // กลางคืน 2 รอบ / กลางวัน 3 รอบ
+    const totalPlays = isNight ? 2 : 3;
+    let playNo = 0;
+
+    function playPopupSound() {
+      playNo++;
+
+      // สร้าง Audio ใหม่ทุกรอบ เพื่อให้มือถือเล่นรอบถัดไปได้แน่นอน
+      const popupAudio = new Audio(soundFile);
+      popupAudio.preload = "auto";
+
+      popupAudio.onended = () => {
+        if (playNo < totalPlays) {
+          playPopupSound();
+          return;
+        }
+
+        phasePopupSoundActive = false;
+        if (state) updateGameMusic(state);
+      };
+
+      popupAudio.onerror = () => {
+        console.log("PHASE POPUP AUDIO ERROR:", soundFile);
+        phasePopupSoundActive = false;
+        if (state) updateGameMusic(state);
+      };
+
+      popupAudio.play().catch(err => {
+        console.log("PHASE POPUP PLAY ERROR:", err);
+        phasePopupSoundActive = false;
+        if (state) updateGameMusic(state);
+      });
+    }
+
+    playPopupSound();
+  }
+
+  clearTimeout(phasePopupTimer);
+
+  const countdownTimer = setInterval(() => {
+    remaining--;
+
+    if (remaining >= 1) {
+      if (countdown) countdown.textContent = remaining;
+    } else {
+      clearInterval(countdownTimer);
+    }
+  }, 1000);
+
+  phasePopupTimer = setTimeout(() => {
+    clearInterval(countdownTimer);
+    popup.classList.add("hidden");
+
+    // ไม่หยุดเสียงตรงนี้ ปล่อยให้เสียงเล่นจนจบเอง
+  }, 5000);
+}
+
+// ใช้ทดสอบจาก Console
+window.testNightPopup = () => showPhasePopup("night");
+window.testDayPopup = () => showPhasePopup("day");
+
+// ===== END DAY / NIGHT PHASE POPUP =====
+
+
+
+/* ===== ROLE ACTION REMINDER ===== */
+let roleActionReminderTimer = null;
+let roleActionReminderKey = null;
+
+function cancelRoleActionReminder(){
+  if(roleActionReminderTimer){
+    clearTimeout(roleActionReminderTimer);
+    clearInterval(roleActionReminderTimer);
+    roleActionReminderTimer = null;
+  }
+}
+
+function scheduleRoleActionReminder(){
+  cancelRoleActionReminder();
+
+  if(!state || !me || !state.started) return;
+  if(state.phase !== "night") return;
+  if(!me.alive) return;
+
+  const card = document.getElementById("roleFlipCard");
+  if(!card || card.classList.contains("role-card-hidden")) return;
+
+  const key = `${state.room || ""}_${state.gameRound || 1}_${state.night || 0}_${me.id || ""}`;
+
+  roleActionReminderTimer = setTimeout(()=>{
+    roleActionReminderTimer = null;
+
+    if(!state || state.phase !== "night" || !me?.alive) return;
+
+    // ไม่สนว่าการ์ด Role จะคว่ำหรือหงาย
+    // ถ้ายังมี Action ที่ต้องทำ ให้แจ้งเตือน
+    if (typeof roleActionStillRequired === "function" && roleActionStillRequired()) {
+      console.log("ROLE ACTION REMINDER:", key, me.role);
+      showRoleActionReminder();
+
+      // ถ้ายังไม่ทำ Action ให้เตือนซ้ำทุก 30 วินาที
+      roleActionReminderTimer = setInterval(() => {
+        if (!state || !me || !state.started || state.phase !== "night" || !me.alive) {
+          cancelRoleActionReminder();
+          return;
+        }
+
+        if (typeof roleActionStillRequired === "function" && roleActionStillRequired()) {
+          showRoleActionReminder();
+        } else {
+          cancelRoleActionReminder();
+        }
+      },30000);
+    }
+  },5000);
+}
+
+/* ===== ROLE CARD FLIP ===== */
+window.toggleRoleCard = function(event) {
+  const card = document.getElementById("roleFlipCard");
+  if (!card) return;
+
+  // ถ้ากดปุ่ม / input / Action ด้านหน้าการ์ด
+  // ให้ใช้งาน Action ได้ตามปกติ ไม่พลิกการ์ด
+  if (
+    event.target.closest("button") ||
+    event.target.closest("input") ||
+    event.target.closest("textarea") ||
+    event.target.closest("select")
+  ) return;
+
+  card.classList.toggle("role-card-hidden");
+
+  // เปิดดู Role แล้ว เริ่มรอ 5 วินาที
+  // หลังจากนี้คว่ำหรือหงายการ์ดก็ยังเตือน หาก Action ยังไม่ได้ทำ
+  scheduleRoleActionReminder();
+
+  // อัปเดตปุ่มยืนยันโหวตทันทีเมื่อพลิกการ์ด
+  setTimeout(() => {
+    if (typeof updateOutsideVoteConfirm === "function") {
+      updateOutsideVoteConfirm();
+    }
+  }, 0);
+
+  // อัปเดตสัญลักษณ์ลับทันทีหลังพลิกการ์ด
+  // 💘 Cupid / 🐾 Wolf / 🛡️ Guard / 🔮 Seer / 🎯 Huntress / 🔗 DireWolf
+  if (state) {
+    const hidden = card.classList.contains("role-card-hidden");
+
+    document.querySelectorAll(".secret-role-mark").forEach(el => {
+      el.style.display = hidden ? "none" : "";
+    });
+  }
+};
+
+/* ===== OUTSIDE DAY VOTE CONFIRM ===== */
+function updateOutsideVoteConfirm() {
+  const box = document.getElementById("outsideVoteConfirm");
+  if (!box) return;
+
+  box.innerHTML = "";
+  box.classList.add("hidden");
+
+  const roleCard = document.getElementById("roleFlipCard");
+  const cardHidden = roleCard?.classList.contains("role-card-hidden");
+
+  // เปิดหน้าการ์ดอยู่ = ใช้ปุ่มยืนยันเดิมใน Action
+  // คว่ำการ์ดอยู่ = ใช้ปุ่มยืนยันด้านนอก
+  if (!cardHidden) return;
+
+  if (
+    !state ||
+    state.phase !== "day" ||
+    !me?.alive ||
+    state.voteSummary?.myVoted ||
+    window.playerCardAction !== "vote" ||
+    !window.selectedPlayerId
+  ) return;
+
+  box.classList.remove("hidden");
+  box.innerHTML = `
+    <button type="button" class="primary full"
+      onclick="confirmPlayerCardAction()">
+      ✓ ยืนยันการโหวต
+    </button>
+  `;
+}
+
+/* ===== ROLE ACTION REMINDER POPUP ===== */
+function showRoleActionReminder(){
+  if(!state || !me || !state.started || state.phase !== "night" || !me.alive) return;
+
+  const roleNames = {
+    Werewolf: "🐺 หมาป่า",
+    WolfCub: "🐺 ลูกหมาป่า",
+    DireWolf: "🐺 หมาป่าโลกันตร์",
+    Seer: "🔮 ผู้ทำนาย",
+    Bodyguard: "🛡️ ผู้คุ้มกัน",
+    Cupid: "💘 กามเทพ",
+    Huntress: "🏹 พรานหญิง"
+  };
+
+  const roleName = roleNames[me.role] || "Role ของคุณ";
+
+  document.getElementById("roleActionReminderPopup")?.remove();
+
+  const popup = document.createElement("div");
+  popup.id = "roleActionReminderPopup";
+  popup.className = "deathPopup";
+
+  popup.innerHTML = `
+    <div class="deathBox">
+      <div style="font-size:48px">🔔</div>
+      <h2>ถึงเวลาทำ Action</h2>
+      <p><b>${roleName}</b></p>
+      <p>กรุณาเลือก Action ของคุณ</p>
+      <button class="primary full"
+        onclick="document.getElementById('roleActionReminderPopup')?.remove()">
+        ตกลง
+      </button>
+    </div>
+  `;
+
+  document.body.appendChild(popup);
+
+  try {
+    const sound = new Audio("/sounds/death-bell.mp3");
+    sound.volume = 0.8;
+    sound.play().catch(()=>{});
+  } catch(e){}
+
+  try {
+    if(navigator.vibrate) navigator.vibrate([200,100,200]);
+  } catch(e){}
+}
+
+/* ===== CHECK ROLE ACTION STILL REQUIRED ===== */
+function roleActionStillRequired(){
+  if(!state || !me || !state.started || state.phase !== "night" || !me.alive){
+    return false;
+  }
+
+  // Cupid ทำเฉพาะคืนแรก และถ้าเลือกคู่ครบแล้วถือว่าจบ
+  if(me.role === "Cupid"){
+    return Number(state.night) === 1 &&
+      (!Array.isArray(state.cupidLovers) || state.cupidLovers.length < 2);
+  }
+
+  // Seer
+  if(me.role === "Seer"){
+    return !state.seerDone;
+  }
+
+  // Bodyguard
+  if(me.role === "Bodyguard"){
+    return !state.guardDone;
+  }
+
+  // Huntress
+  if(me.role === "Huntress"){
+    return !state.huntressUsed && !state.myNightAction;
+  }
+
+  // หมาป่าทั้ง 3 Role
+  if(["Werewolf","WolfCub","DireWolf"].includes(me.role)){
+    return !state.myNightAction;
+  }
+
+  // DireWolf คืนแรกต้องเลือก Companion ก่อน
+  if(me.role === "DireWolf" && Number(state.night) === 1 && !state.direCompanion){
+    return true;
+  }
+
+  // Role อื่นไม่มี Action ที่ต้องเตือน
+  return false;
+}
+
+/* ===== DAY VOTE REMINDER ===== */
+let dayVoteReminderTimer = null;
+let dayVoteReminderKey = null;
+
+function cancelDayVoteReminder(){
+  if(dayVoteReminderTimer){
+    clearInterval(dayVoteReminderTimer);
+    clearTimeout(dayVoteReminderTimer);
+    dayVoteReminderTimer = null;
+  }
+  dayVoteReminderKey = null;
+  document.getElementById("dayVoteReminderPopup")?.remove();
+}
+
+function showDayVoteReminder(){
+  if(
+    !state ||
+    !me ||
+    !state.started ||
+    state.phase !== "day" ||
+    !me.alive ||
+    state.voteSummary?.myVoted
+  ) return;
+
+  document.getElementById("dayVoteReminderPopup")?.remove();
+
+  const popup = document.createElement("div");
+  popup.id = "dayVoteReminderPopup";
+  popup.className = "deathPopup";
+
+  popup.innerHTML = `
+    <div class="deathBox">
+      <div style="font-size:48px">🗳️</div>
+      <h2>ถึงเวลาโหวตแล้ว</h2>
+      <p>กรุณาเลือกผู้เล่นที่ต้องการโหวต</p>
+      <button class="primary full"
+        onclick="document.getElementById('dayVoteReminderPopup')?.remove()">
+        ตกลง
+      </button>
+    </div>
+  `;
+
+  document.body.appendChild(popup);
+
+  try {
+    const sound = new Audio("/sounds/death-bell.mp3");
+    sound.volume = 0.8;
+    sound.play().catch(()=>{});
+  } catch(e){}
+
+  try {
+    if(navigator.vibrate) navigator.vibrate([200,100,200]);
+  } catch(e){}
+}
+
+function scheduleDayVoteReminder(){
+  if(
+    !state ||
+    !me ||
+    !state.started ||
+    state.phase !== "day" ||
+    !me.alive ||
+    state.voteSummary?.myVoted
+  ){
+    cancelDayVoteReminder();
+    return;
+  }
+
+  // 1 Timer ต่อ 1 Day เท่านั้น ป้องกัน sendState / reconnect สร้างซ้ำ
+  const key = `${state.room || ""}_${state.gameRound || 1}_${state.day || state.dayEndsAt || "day"}`;
+
+  if(dayVoteReminderTimer && dayVoteReminderKey === key){
+    return;
+  }
+
+  cancelDayVoteReminder();
+  dayVoteReminderKey = key;
+
+  // ครั้งแรกหลังเข้า Day 30 วินาที
+  dayVoteReminderTimer = setTimeout(() => {
+    if(
+      !state ||
+      !me ||
+      state.phase !== "day" ||
+      !me.alive ||
+      state.voteSummary?.myVoted
+    ){
+      cancelDayVoteReminder();
+      return;
+    }
+
+    showDayVoteReminder();
+
+    // จากนั้นเตือนซ้ำทุก 30 วินาทีจนกว่าจะโหวต
+    dayVoteReminderTimer = setInterval(() => {
+      if(
+        !state ||
+        !me ||
+        state.phase !== "day" ||
+        !me.alive ||
+        state.voteSummary?.myVoted
+      ){
+        cancelDayVoteReminder();
+        return;
+      }
+
+      showDayVoteReminder();
+    },30000);
+
+  },30000);
+}
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Werewolf Online</title>
+  <link rel="stylesheet" href="/style.css?v=17">
+</head>
+<body>
+  <div id="app">
+    <section id="home" class="screen">
+      <div class="hero">
+        <div class="logo">🐺</div>
+        <h1>WEREWOLF <span>ONLINE</span></h1>
+        <p>Online Multiplayer • สูงสุด 15 คน</p>
+        <div class="card login">
+          <input id="name" maxlength="24" placeholder="ชื่อผู้เล่น">
+          <div class="row">
+            <button id="createBtn" class="primary">สร้างห้อง</button>
+            <input id="roomCode" maxlength="6" placeholder="ROOM CODE">
+            <button id="joinBtn">เข้าร่วมห้อง</button>
+          </div>
+          <div id="homeMsg" class="msg"></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="lobby" class="screen hidden">
+      <header>
+  <div><b>ROOM</b> <strong id="room"></strong></div>
+
+  <div class="game-top-actions">
+    <button id="copyBtn">คัดลอก Code</button>
+    <button type="button" class="top-icon-btn" onclick="location.reload()" title="Refresh">🔄</button>
+    <button type="button" class="top-icon-btn exit-btn" onclick="leaveGame()" title="ออกจากห้อง">🚪</button>
+  </div>
+</header>
+      <main class="grid">
+        <div class="card">
+          <h2>ผู้เล่น <span id="playerCount"></span>/15</h2>
+          <div id="players"></div>
+        </div>
+        <div id="hostPanel" class="card hidden">
+          <h2>👑 เลือก Role</h2>
+          <p class="muted">จำนวน Role ต้องเท่ากับจำนวนผู้เล่น และเลือกซ้ำได้</p>
+          <div id="roles"></div>
+          <div class="total">เลือกแล้ว <b id="roleTotal">0</b> / <span id="roleNeed">0</span></div>
+          <button id="startBtn" class="primary full">🎮 START GAME</button>
+          <div id="hostMsg" class="msg"></div>
+        </div>
+        <div id="waitPanel" class="card">
+          <h2>รอ HOST</h2>
+          <p>แชร์ Room Code ให้เพื่อนเข้าร่วม</p>
+          <div class="bigcode" id="bigCode"></div>
+        </div>
+      </main>
+    </section>
+
+    <section id="game" class="screen hidden game-screen">
+      <header>
+        <div><b id="phaseTitle">NIGHT</b> <span id="nightNo"></span></div>
+      <div class="game-top-actions">
+        <button type="button" class="top-icon-btn" onclick="location.reload()" title="Refresh">🔄</button>
+        <button type="button" class="top-icon-btn exit-btn" onclick="leaveGame()" title="ออกจากเกม">🚪</button>
+      </div>
+        <button id="newRoundBtn" class="hidden">🔄 เล่นรอบใหม่</button>
+      </header>
+      <main class="gamegrid new-game-layout">
+        <div class="card me">
+      <div id="roleFlipCard" class="role-flip-card role-card-hidden" onclick="toggleRoleCard(event)">
+
+        <div class="role-card-back">
+          <img src="/werewolf-card-back.png" alt="Werewolf Card Back">
+        </div>
+
+        <div class="role-card-front">
+          <div id="myRole"></div>
+          <div id="private"></div>
+
+          <div id="actionCard" class="actionCard role-action-area">
+            <h2 id="actionTitle"></h2>
+            <div id="actions"></div>
+            <div id="gameMsg" class="msg"></div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <div class="card">
+          <h2>ผู้เล่น</h2>
+          <div id="outsideVoteConfirm" class="hidden"></div>
+      <div id="gamePlayers"></div>
+        </div>
+          <!-- ===== GLOBAL CHAT ===== -->
+    <div id="globalChatCard" class="card wolf-chat-card">
+      <h2>💬 แชทผู้เล่น</h2>
+      <div id="globalChatMessages" class="wolf-chat-messages"></div>
+      <div class="wolf-chat-input-row">
+        <input id="globalChatInput" maxlength="300" placeholder="พิมพ์ข้อความ...">
+        <button id="globalChatSendBtn" type="button">ส่ง</button>
+      </div>
+      <div id="globalChatMsg" class="msg"></div>
+    </div>
+
+    <!-- ===== WOLF CHAT ===== -->
+    <div id="wolfChatCard" class="card wolf-chat-card hidden">
+      <h2>🐺 แชทหมาป่า</h2>
+      <div id="wolfChatMessages" class="wolf-chat-messages"></div>
+      <div class="wolf-chat-input-row">
+        <input id="wolfChatInput" maxlength="300" placeholder="พิมพ์ข้อความถึงฝูงหมาป่า...">
+        <button id="wolfChatSendBtn" type="button">ส่ง</button>
+      </div>
+      <div id="wolfChatMsg" class="msg"></div>
+    </div>
+</main>
+    </section>
+<script src="/socket.io/socket.io.js"></script>
+<script src="/app.js?v=99"></script>
+
+<!-- GAME BACKGROUND MUSIC -->
+<audio id="gameBgm" loop preload="auto"></audio>
+
+
+<!-- ===== DAY / NIGHT PHASE POPUP ===== -->
+<div id="phasePopup" class="phase-popup hidden">
+  <div class="phase-popup-box">
+    <img id="phasePopupImg" src="" alt="">
+    <div id="phasePopupTitle"></div>
+    <div id="phasePopupCountdown">5</div>
+  </div>
+</div>
+
+<audio id="wolfHowlSound" preload="auto">
+  <source src="/sounds/wolf-howl.mp3" type="audio/mpeg">
+</audio>
+
+<audio id="roosterSound" preload="auto">
+  <source src="/sounds/rooster.mp3" type="audio/mpeg">
+</audio>
+<!-- ===== END PHASE POPUP ===== -->
+
+</body>
+</html>*{box-sizing:border-box}body{margin:0;font-family:Inter,system-ui,-apple-system,"Segoe UI",sans-serif;background:#0d0f14;color:#f5f5f5}button,input{font:inherit}button{border:0;border-radius:12px;padding:12px 18px;background:#252a35;color:#fff;cursor:pointer}button:hover{filter:brightness(1.15)}button.primary{background:linear-gradient(135deg,#8b5cf6,#ec4899);font-weight:800}.full{width:100%}input{background:#171a22;border:1px solid #343947;color:#fff;padding:12px 14px;border-radius:12px;outline:none}input:focus{border-color:#a78bfa}.screen{min-height:100vh}.hidden{display:none!important}.hero{min-height:100vh;display:flex;align-items:center;justify-content:center;flex-direction:column;padding:24px;background:radial-gradient(circle at 50% 20%,#25203d 0,#0d0f14 45%)}.logo{font-size:76px}.hero h1{font-size:48px;margin:8px 0 4px;letter-spacing:3px}.hero h1 span{font-weight:300}.hero p,.muted{color:#9ca3af}.card{background:rgba(23,26,34,.94);border:1px solid #303542;border-radius:20px;padding:22px;box-shadow:0 18px 50px #0006}.login{width:min(560px,100%);margin-top:24px}.login>input{width:100%;margin-bottom:12px}.row{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}.msg{margin-top:12px;color:#fca5a5;white-space:pre-line}.hero .msg{text-align:center}header{height:72px;padding:0 28px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #292e38;background:#11141b;position:sticky;top:0;z-index:2}header b{color:#a78bfa;margin-right:8px}.grid{max-width:1200px;margin:28px auto;padding:0 20px;display:grid;grid-template-columns:1fr 1.4fr;gap:20px}.grid>.card:first-child{grid-row:span 2}.bigcode{text-align:center;font-size:52px;letter-spacing:8px;font-weight:900;padding:40px 0;color:#c4b5fd}.player{display:flex;align-items:center;justify-content:space-between;padding:11px 0;border-bottom:1px solid #292e38}.player:last-child{border:0}.dead{opacity:.4;text-decoration:line-through}.hosttag{font-size:12px;background:#3b2d66;color:#d8b4fe;padding:4px 8px;border-radius:99px}.role{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 0;border-bottom:1px solid #292e38}.roleName{display:flex;align-items:center;gap:10px}.counter{display:flex;align-items:center;gap:8px}.counter button{padding:6px 11px;border-radius:9px}.counter span{width:26px;text-align:center}.total{text-align:center;padding:16px;color:#cbd5e1}.gamegrid{max-width:1200px;margin:28px auto;padding:0 20px;display:grid;grid-template-columns:1fr 1fr;gap:20px}.actionCard{grid-column:span 2}.myrole{text-align:center}.roleEmoji{font-size:64px}.roleTitle{font-size:28px;font-weight:900}.faction{color:#a78bfa}.target{width:100%;margin:6px 0;text-align:left}.target.selected{outline:2px solid #a78bfa;background:#32265c}.actionRow{display:flex;flex-wrap:wrap;gap:8px}.notice{padding:14px;border-radius:12px;background:#171a22;margin:8px 0;color:#d1d5db}.winner{font-size:34px;text-align:center;padding:24px;font-weight:900}.danger{color:#fca5a5}@media(max-width:800px){.grid,.gamegrid{grid-template-columns:1fr}.grid>.card:first-child{grid-row:auto}.actionCard{grid-column:auto}.row{grid-template-columns:1fr}.hero h1{font-size:34px}.bigcode{font-size:40px}}
+/* ===== WEREWOLF NEW GAME UI ===== */
+
+.game-screen{
+  min-height:100vh;
+  background:
+    radial-gradient(circle at 50% 0%,rgba(89,52,140,.25),transparent 45%),
+    linear-gradient(180deg,#080811 0%,#11101a 100%);
+}
+
+/* TOP BAR */
+.game-screen > header{
+  min-height:72px;
+  padding:14px 24px;
+  background:rgba(12,11,20,.96);
+  border-bottom:1px solid rgba(255,255,255,.08);
+  box-shadow:0 8px 30px rgba(0,0,0,.35);
+}
+
+.game-screen #phaseTitle{
+  color:#f0c674;
+  font-size:22px;
+  letter-spacing:1px;
+}
+
+.game-screen #nightNo{
+  display:inline-block;
+  margin-left:8px;
+  padding:5px 12px;
+  border-radius:20px;
+  background:#2a203d;
+  color:#d8c7ff;
+  font-weight:700;
+}
+
+/* MAIN LAYOUT */
+.new-game-layout{
+  width:min(1180px,calc(100% - 32px));
+  margin:24px auto 60px;
+  display:grid;
+  grid-template-columns:320px 1fr;
+  gap:18px;
+  align-items:start;
+}
+
+/* ALL GAME CARDS */
+.game-screen .card{
+  border:1px solid rgba(255,255,255,.08);
+  background:linear-gradient(145deg,rgba(30,28,42,.96),rgba(17,16,25,.98));
+  border-radius:18px;
+  box-shadow:0 14px 35px rgba(0,0,0,.28);
+}
+
+/* ROLE CARD */
+.game-screen .me{
+  grid-column:1;
+  grid-row:1;
+  min-height:280px;
+  text-align:center;
+  position:sticky;
+  top:90px;
+}
+
+.game-screen .myrole{
+  padding:18px 10px;
+}
+
+.game-screen .roleEmoji{
+  font-size:76px;
+  line-height:1;
+  margin:10px 0 18px;
+  filter:drop-shadow(0 8px 18px rgba(0,0,0,.45));
+}
+
+.game-screen .roleTitle{
+  font-size:28px;
+  font-weight:900;
+  color:#f0c674;
+}
+
+.game-screen .faction{
+  margin-top:10px;
+  opacity:.72;
+}
+
+/* PLAYER CARD */
+.new-game-layout > .card:nth-child(2){
+  grid-column:2;
+  grid-row:1 / span 2;
+}
+
+.game-screen #gamePlayers{
+  display:grid;
+  grid-template-columns:repeat(4,minmax(0,1fr));
+  gap:12px;
+  margin-top:14px;
+}
+
+.game-screen #gamePlayers .player{
+  min-height:76px;
+  padding:14px;
+  border:1px solid rgba(255,255,255,.09);
+  border-radius:14px;
+  background:rgba(255,255,255,.035);
+  display:flex;
+  flex-direction:column;
+  justify-content:center;
+  align-items:center;
+  gap:8px;
+  text-align:center;
+  transition:.2s ease;
+}
+
+.game-screen #gamePlayers .player:hover{
+  transform:translateY(-2px);
+  border-color:rgba(240,198,116,.45);
+}
+
+.game-screen #gamePlayers .player.dead{
+  opacity:.38;
+  filter:grayscale(1);
+}
+
+/* ACTION AREA */
+.game-screen .actionCard{
+  grid-column:1;
+  grid-row:2;
+}
+
+.game-screen #actionTitle{
+  color:#f0c674;
+  text-align:center;
+}
+
+.game-screen #actions{
+  display:grid;
+  gap:10px;
+}
+
+.game-screen #actions button{
+  min-height:50px;
+  border-radius:12px;
+  font-size:16px;
+  font-weight:700;
+}
+
+/* MESSAGES */
+.game-screen #gameMsg{
+  margin-top:14px;
+  padding:12px;
+  text-align:center;
+  border-radius:12px;
+}
+
+/* MOBILE */
+@media(max-width:800px){
+  .new-game-layout{
+    width:min(100% - 20px,600px);
+    grid-template-columns:1fr;
+    margin-top:14px;
+  }
+
+  .game-screen .me,
+  .new-game-layout > .card:nth-child(2),
+  .game-screen .actionCard{
+    grid-column:1;
+    grid-row:auto;
+    position:static;
+  }
+
+  .game-screen #gamePlayers{
+    grid-template-columns:repeat(2,minmax(0,1fr));
+  }
+
+  .game-screen .roleEmoji{
+    font-size:64px;
+  }
+
+  .game-screen .roleTitle{
+    font-size:24px;
+  }
+}
+
+
+/* ===== SELECT PLAYER FROM PLAYER GRID ===== */
+
+.game-screen #gamePlayers .selectable-player{
+  cursor:pointer;
+  position:relative;
+}
+
+.game-screen #gamePlayers .selectable-player:hover{
+  border-color:#8b5cf6;
+  background:rgba(139,92,246,.10);
+  transform:translateY(-2px);
+}
+
+.game-screen #gamePlayers .selected-player{
+  border:2px solid #a855f7 !important;
+  background:linear-gradient(
+    135deg,
+    rgba(109,40,217,.40),
+    rgba(88,28,135,.28)
+  ) !important;
+  box-shadow:
+    0 0 0 2px rgba(168,85,247,.15),
+    0 0 24px rgba(168,85,247,.45);
+  transform:translateY(-2px);
+}
+
+.game-screen #gamePlayers .selected-player::after{
+  content:"✓";
+  position:absolute;
+  top:7px;
+  right:9px;
+  width:26px;
+  height:26px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  border-radius:50%;
+  background:#8b5cf6;
+  color:white;
+  font-size:16px;
+  font-weight:900;
+  box-shadow:0 0 15px rgba(139,92,246,.7);
+}
+
+.player-select-help{
+  text-align:center;
+  color:#c4b5fd;
+}
+
+.selected-summary{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  padding:14px 16px;
+  margin-bottom:10px;
+  border-radius:12px;
+  background:rgba(139,92,246,.12);
+  border:1px solid rgba(167,139,250,.30);
+}
+
+.selected-summary b{
+  color:#c4b5fd;
+  font-size:17px;
+}
+
+
+/* ===== LIVE VOTE RESULT ===== */
+
+#voteProgress{
+  margin:12px 0 16px;
+  padding:12px 16px;
+  text-align:center;
+  border-radius:12px;
+  background:rgba(139,92,246,.12);
+  border:1px solid rgba(167,139,250,.28);
+  color:#ddd6fe;
+}
+
+#voteProgress b{
+  color:#c4b5fd;
+  font-size:18px;
+}
+
+.vote-badge{
+  margin-top:4px;
+  padding:5px 10px;
+  border-radius:99px;
+  font-size:13px;
+  font-weight:800;
+  background:rgba(255,255,255,.06);
+  color:#9ca3af;
+}
+
+.vote-badge.has-votes{
+  background:rgba(139,92,246,.22);
+  border:1px solid rgba(167,139,250,.45);
+  color:#d8b4fe;
+}
+
+
+/* ===== WOLF TEAM ===== */
+
+.wolf-team-box{
+  margin-top:20px;
+  padding:14px;
+  border-radius:14px;
+  background:rgba(127,29,29,.16);
+  border:1px solid rgba(239,68,68,.30);
+  text-align:left;
+}
+
+.wolf-team-title{
+  margin-bottom:10px;
+  color:#fca5a5;
+  font-size:17px;
+  font-weight:900;
+  text-align:center;
+}
+
+.wolf-team-list{
+  display:grid;
+  gap:7px;
+}
+
+.wolf-team-member{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+  padding:9px 11px;
+  border-radius:10px;
+  background:rgba(255,255,255,.04);
+}
+
+.wolf-team-member.is-me{
+  background:rgba(139,92,246,.18);
+  border:1px solid rgba(167,139,250,.35);
+}
+
+.wolf-team-member.is-dead{
+  opacity:.45;
+}
+
+.wolf-team-note{
+  margin-top:10px;
+  color:#9ca3af;
+  font-size:12px;
+  text-align:center;
+}
+
+/* ===== BODYGUARD PREVIOUS TARGET ===== */
+#gamePlayers .player.guard-disabled {
+  opacity: .35;
+  cursor: not-allowed !important;
+  filter: grayscale(.8);
+}
+
+#gamePlayers .player.guard-disabled:hover {
+  transform: none !important;
+  box-shadow: none !important;
+}
+
+/* ===== Role Character Image ===== */
+.roleImageWrap {
+  width: 100%;
+  max-width: 240px;
+  margin: 0 auto 14px;
+  display: flex;
+  justify-content: center;
+}
+
+.roleImage {
+  width: 100%;
+  height: auto;
+  display: block;
+  border-radius: 18px;
+  object-fit: contain;
+  box-shadow: 0 8px 24px rgba(0,0,0,.35);
+}
+
+@media (max-width: 600px) {
+  .roleImageWrap {
+    max-width: 200px;
+    margin-bottom: 10px;
+  }
+
+  .roleImage {
+    border-radius: 14px;
+  }
+}
+
+/* ===== HOST ROLE CARD SELECTOR ===== */
+
+#roles {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.role-card {
+  overflow: hidden;
+  padding: 0 !important;
+  display: flex;
+  flex-direction: column;
+  border-radius: 16px;
+}
+
+.role-select-image {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+.role-select-info {
+  padding: 10px;
+  text-align: center;
+}
+
+.role-select-name {
+  font-size: 16px;
+  font-weight: 700;
+  margin-bottom: 2px;
+}
+
+.role-select-counter {
+  margin-top: 9px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+
+.role-select-counter button {
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  font-size: 22px;
+  font-weight: 700;
+}
+
+.role-select-counter span {
+  min-width: 25px;
+  font-size: 18px;
+  font-weight: 700;
+}
+
+@media (min-width: 700px) {
+  #roles {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+/* ===== HOST ROLE CARD SELECTOR ===== */
+#roles {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.role-card {
+  overflow: hidden;
+  padding: 0 !important;
+  display: flex;
+  flex-direction: column;
+  border-radius: 14px;
+}
+
+.role-select-image {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+.role-select-info {
+  padding: 8px;
+  text-align: center;
+}
+
+.role-select-name {
+  font-size: 15px;
+  font-weight: 700;
+  margin-bottom: 2px;
+}
+
+.role-select-counter {
+  margin-top: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.role-select-counter button {
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.role-select-counter span {
+  min-width: 24px;
+  font-size: 17px;
+  font-weight: 700;
+}
+
+@media (min-width: 700px) {
+  #roles {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+/* Mobile: 3 Role Cards per row */
+@media (max-width: 699px) {
+  #roles {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 6px;
+  }
+
+  .role-select-info {
+    padding: 6px 2px;
+  }
+
+  .role-select-name {
+    font-size: 12px;
+  }
+
+  .role-select-info small {
+    font-size: 9px;
+  }
+
+  .role-select-counter {
+    gap: 3px;
+    margin-top: 6px;
+  }
+
+  .role-select-counter button {
+    width: 27px;
+    height: 27px;
+    font-size: 16px;
+  }
+
+  .role-select-counter span {
+    min-width: 14px;
+    font-size: 13px;
+  }
+}
+
+/* Mobile: 4 Role Cards per row */
+@media (max-width: 699px) {
+  #roles {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 4px;
+  }
+
+  .role-select-info {
+    padding: 5px 1px;
+  }
+
+  .role-select-name {
+    font-size: 10px;
+  }
+
+  .role-select-info small {
+    font-size: 8px;
+  }
+
+  .role-select-counter {
+    gap: 2px;
+    margin-top: 5px;
+  }
+
+  .role-select-counter button {
+    width: 23px;
+    height: 25px;
+    font-size: 14px;
+    padding: 0;
+  }
+
+  .role-select-counter span {
+    min-width: 11px;
+    font-size: 11px;
+  }
+}
+
+/* Mobile: 4 Role Cards per row */
+@media (max-width: 699px) {
+  #roles {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 4px;
+  }
+
+  .role-select-info {
+    padding: 5px 1px;
+  }
+
+  .role-select-name {
+    font-size: 10px;
+  }
+
+  .role-select-info small {
+    font-size: 8px;
+  }
+
+  .role-select-counter {
+    gap: 2px;
+    margin-top: 5px;
+  }
+
+  .role-select-counter button {
+    width: 23px;
+    height: 25px;
+    font-size: 14px;
+    padding: 0;
+  }
+
+  .role-select-counter span {
+    min-width: 11px;
+    font-size: 11px;
+  }
+}
+#deathPopup,#gameOverPopup,#noDeathPopup{
+ position:fixed;inset:0;z-index:99999;
+ background:#000c;display:flex;
+ align-items:center;justify-content:center;
+ padding:20px;text-align:center
+}
+.deathBox{
+ width:90%;max-width:400px;
+ background:#181818;padding:25px;
+ border-radius:20px
+}
+.deathBox h2{font-size:26px}
+.deathBox button{
+ padding:10px 30px;border:0;
+ border-radius:10px;font-size:16px
+}
+
+/* ===== GAME TOP BUTTONS ===== */
+#game > header{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+}
+
+.game-top-actions{
+  display:flex;
+  align-items:center;
+  gap:6px;
+  margin-left:auto;
+}
+
+.top-icon-btn{
+  width:38px;
+  height:38px;
+  min-width:38px;
+  padding:0;
+  border:0;
+  border-radius:10px;
+  font-size:20px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  cursor:pointer;
+}
+
+.exit-btn{
+  font-size:19px;
+}
+
+#newRoundBtn.hidden{
+  display:none;
+}
+
+
+/* ===== WOLF CHAT ===== */
+.wolf-chat-card {
+  margin-top: 12px;
+}
+
+.wolf-chat-card h2 {
+  margin: 0 0 10px;
+}
+
+.wolf-chat-messages {
+  height: 220px;
+  overflow-y: auto;
+  padding: 10px;
+  border-radius: 12px;
+  background: rgba(0,0,0,.25);
+  margin-bottom: 10px;
+}
+
+.wolf-chat-input-row {
+  display: flex;
+  gap: 8px;
+}
+
+#wolfChatInput {
+  flex: 1;
+  min-width: 0;
+}
+
+#wolfChatSendBtn {
+  flex: 0 0 auto;
+}
+
+.wolf-chat-message {
+  padding: 7px 9px;
+  margin-bottom: 6px;
+  border-radius: 9px;
+  background: rgba(255,255,255,.08);
+  word-break: break-word;
+}
+
+.wolf-chat-message-name {
+  font-weight: 700;
+  margin-right: 5px;
+}
+
+/* ===== DAY / NIGHT PHASE POPUP ===== */
+
+.phase-popup {
+  position: fixed;
+  inset: 0;
+  z-index: 99999;
+  background: #000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.phase-popup.hidden {
+  display: none !important;
+}
+
+.phase-popup-box {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #000;
+}
+
+.phase-popup-box img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+
+#phasePopupTitle {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 8%;
+  text-align: center;
+  font-size: clamp(28px, 6vw, 58px);
+  font-weight: 900;
+  color: white;
+  text-shadow:
+    0 3px 8px #000,
+    0 0 20px #000;
+}
+
+/* Animation ตอน Popup เปิด */
+.phase-popup:not(.hidden) .phase-popup-box {
+  animation: phaseFadeIn .7s ease-out;
+}
+
+.phase-popup:not(.hidden) img {
+  animation: phaseZoom 5s ease-out forwards;
+}
+
+@keyframes phaseFadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes phaseZoom {
+  from { transform: scale(1.08); }
+  to   { transform: scale(1); }
+}
+
+
+/* DAY / NIGHT POPUP COUNTDOWN */
+#phasePopupCountdown {
+  position: absolute;
+  left: 50%;
+  bottom: 18%;
+  transform: translateX(-50%);
+  z-index: 10;
+
+  font-size: clamp(52px, 14vw, 110px);
+  font-weight: 900;
+  line-height: 1;
+  color: white;
+
+  text-shadow:
+    0 4px 10px #000,
+    0 0 20px #000,
+    0 0 35px #000;
+
+  pointer-events: none;
+}
+
+.phase-popup:not(.hidden) #phasePopupCountdown {
+  animation: phaseCountdownPulse 1s ease-in-out infinite;
+}
+
+@keyframes phaseCountdownPulse {
+  0%   { transform: translateX(-50%) scale(1); }
+  50%  { transform: translateX(-50%) scale(1.18); }
+  100% { transform: translateX(-50%) scale(1); }
+}
+
+/* ===== ROLE ACTION AREA ===== */
+
+/* Action อยู่ใต้ Role โดยไม่สร้าง Card ซ้อน */
+.card.me .role-action-area {
+  display: none;
+  margin: 18px 0 0;
+  padding: 18px 0 0;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+/* แสดงเฉพาะตอนมี Action */
+.card.me .role-action-area:has(#actions:not(:empty)) {
+  display: block;
+}
+
+/* หัวข้อ Action */
+.card.me #actionTitle {
+  margin: 0 0 14px;
+  padding: 0;
+  font-size: 20px;
+  text-align: left;
+}
+
+/* พื้นที่ปุ่ม Action */
+.card.me #actions {
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+}
+
+/* ข้อความสถานะใต้ Action */
+.card.me #gameMsg {
+  margin-top: 12px;
+}
+
+/* ปุ่มเลือกผู้เล่นใน Action */
+.card.me #actions .target {
+  min-height: 52px;
+  border-radius: 12px;
+}
+
+/* ปุ่มยืนยัน */
+.card.me #actions .primary {
+  width: 100%;
+  min-height: 52px;
+  margin-top: 12px;
+  border-radius: 12px;
+}
+
+
+/* ===== ROLE CARD 3D FLIP ===== */
+.role-flip-card {
+  position: relative;
+  width: 100%;
+  min-height: 620px;
+  perspective: 1200px;
+  cursor: pointer;
+}
+
+.role-card-front,
+.role-card-back {
+  width: 100%;
+  transition: transform .6s ease, opacity .3s ease;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+}
+
+/* ด้านหน้าการ์ด */
+.role-card-front {
+  position: relative;
+  transform: rotateY(0deg);
+  opacity: 1;
+}
+
+/* ด้านหลังการ์ด */
+.role-card-back {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  transform: rotateY(180deg);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.role-card-back img {
+  display: block;
+  width: 100%;
+  max-width: 520px;
+  height: auto;
+  border-radius: 22px;
+  object-fit: contain;
+  box-shadow: 0 12px 35px rgba(0,0,0,.55);
+}
+
+/* ===== คว่ำการ์ด ===== */
+.role-flip-card.role-card-hidden .role-card-front {
+  position: absolute;
+  inset: 0;
+  transform: rotateY(-180deg);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.role-flip-card.role-card-hidden .role-card-back {
+  position: relative;
+  transform: rotateY(0deg);
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* มือถือ */
+@media (max-width: 600px) {
+  .role-flip-card {
+    min-height: 0;
+  }
+
+  .role-card-back img {
+    width: min(100%, 420px);
+    border-radius: 18px;
+  }
+}
+
+/* ===== DAY VOTE STATUS ===== */
+.player.voted {
+  outline: 2px solid #22c55e;
+  box-shadow: 0 0 12px rgba(34,197,94,.45);
+}
+
+.player.voted::after {
+  content: "✓ โหวตแล้ว";
+  font-size: 12px;
+  font-weight: 700;
+  margin-left: 8px;
+  white-space: nowrap;
+}
+
+/* ===== ROLE ACTION REMINDER - CENTER POPUP ===== */
+#roleActionReminderPopup{
+  position: fixed !important;
+  inset: 0 !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  z-index: 99999 !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  padding: 20px !important;
+  box-sizing: border-box !important;
+}
+
+#roleActionReminderPopup .deathBox{
+  position: relative !important;
+  margin: 0 auto !important;
+  width: min(90vw, 420px) !important;
+  max-height: 80vh !important;
+  overflow-y: auto !important;
+}

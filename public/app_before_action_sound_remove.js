@@ -117,22 +117,6 @@ socket.on("state",s=>{
 
   state=s; me=s.me;
 
-  // ROUND 2+ : คืนแรก Refresh หน้าเกม 1 ครั้งต่อรอบ
-  if (
-    s.started &&
-    s.phase === "night" &&
-    Number(s.night) === 1 &&
-    Number(s.gameRound) >= 2
-  ) {
-    const refreshKey = `ww_round_refresh_${s.room}_${s.gameRound}`;
-
-    if (!sessionStorage.getItem(refreshKey)) {
-      sessionStorage.setItem(refreshKey, "1");
-      window.location.reload();
-      return;
-    }
-  }
-
   // RESET ROLE CARD EVERY NEW ROUND
   if (
     previousPhase === "gameover" &&
@@ -725,13 +709,6 @@ function renderNight(){
     ){
       $("actionTitle").textContent="🐺 เลือก เหยื่อ";
 
-      // Wolf Cub ตาย: คืนถัดไปทีมหมาป่าเลือกเหยื่อ 2 คน
-      if (state.wolfCubBonus) {
-        $("actionTitle").textContent="🐺 เลือกเหยื่อ 2 คน";
-        setupWolfBonusSelection();
-        return;
-      }
-
       setupPlayerCardSelection(
         "wolf",
         "เลือก เหยื่อจากรายชื่อผู้เล่น",
@@ -807,10 +784,7 @@ window.chooseHuntress=()=>{setupPlayerCardSelection("huntress","เลือก�
 window.submitHuntress=id=>act("huntress",{target:id});
 window.pickCup=id=>{if(!window.cupA)window.cupA=id;else if(window.cupA!==id)window.cupB=id;document.querySelectorAll("#cup .target").forEach(b=>b.classList.remove("selected"));if(window.cupA)$("cup-"+window.cupA)?.classList.add("selected");if(window.cupB)$("cup-"+window.cupB)?.classList.add("selected")};
 window.submitCupid=()=>{if(!window.cupA||!window.cupB)return alert("เลือก 2 คนก่อน");act("cupid",{a:window.cupA,b:window.cupB})};
-window.skipAction=()=>{
-  act("huntressSkip");
-  $("actions").innerHTML='<div class="notice">✅ ข้ามการใช้พลังคืนนี้แล้ว<br>🌙 รอผู้เล่นคนอื่น...</div>';
-};
+window.skipAction=()=>{ $("actions").innerHTML='<div class="notice">คืนนี้ไม่ใช้พลัง</div>' };
 
 
 function renderDay(){
@@ -1123,62 +1097,6 @@ window.continueMemorial=()=>{
   });
 };
 
-
-/* ===== WOLF CUB BONUS : SELECT 2 TARGETS ===== */
-window.setupWolfBonusSelection = function() {
-  window.wolfBonusSelectedIds = [];
-
-  const wolfIds = new Set((state.wolfTeam || []).map(p => p.id));
-
-  document.querySelectorAll("#gamePlayers .player").forEach((card, index) => {
-    const p = state.players[index];
-
-    card.classList.remove("selectable-player", "selected-player");
-    card.onclick = null;
-
-    if (!p || !p.alive || wolfIds.has(p.id)) return;
-
-    card.classList.add("selectable-player");
-
-    card.onclick = () => {
-      const pos = window.wolfBonusSelectedIds.indexOf(p.id);
-
-      if (pos >= 0) {
-        window.wolfBonusSelectedIds.splice(pos, 1);
-        card.classList.remove("selected-player");
-      } else {
-        if (window.wolfBonusSelectedIds.length >= 2) return;
-        window.wolfBonusSelectedIds.push(p.id);
-        card.classList.add("selected-player");
-      }
-
-      const selected = window.wolfBonusSelectedIds
-        .map(id => state.players.find(x => x.id === id)?.name)
-        .filter(Boolean);
-
-      $("actions").innerHTML =
-        `<div class="notice">
-          🐺 ลูกหมาป่าตาย คืนนี้ทีมหมาป่าฆ่าได้ 2 คน<br>
-          เลือกแล้ว ${selected.length}/2
-          ${selected.length ? "<br>✓ " + selected.join(" + ") : ""}
-        </div>
-        ${selected.length === 2
-          ? '<button class="primary full" onclick="submitWolfBonus()">✓ ยืนยันเหยื่อ 2 คน</button>'
-          : ""}`;
-    };
-  });
-
-  $("actions").innerHTML =
-    '<div class="notice">🐺 ลูกหมาป่าตาย คืนนี้ทีมหมาป่าฆ่าได้ 2 คน<br>👆 เลือกผู้เล่น 2 คน</div>';
-};
-
-window.submitWolfBonus = function() {
-  const ids = window.wolfBonusSelectedIds || [];
-  if (ids.length !== 2) return alert("กรุณาเลือกผู้เล่น 2 คน");
-
-  act("wolf", { a: ids[0], b: ids[1] });
-};
-
 /* ===== PLAYER CARD ACTION SELECT ===== */
 
 window.selectedPlayerId = null;
@@ -1265,13 +1183,11 @@ window.setupPlayerCardSelection = function(actionType, title, confirmText) {
 
   // Bodyguard เลือกผู้เล่นที่ยังมีชีวิตทั้งหมด รวมตัวเอง
   // Action อื่นใช้กติกาเดิม
-    const allowed = actionType === "guard"
-      ? state.players.filter(p => p.alive).map(p => p.id)
-      : actionType === "hunter"
-        ? state.players.filter(p => p.alive && p.id !== me.id).map(p => p.id)
-        : actionType === "companion"
-          ? state.players.filter(p => p.alive && p.id !== me.id).map(p => p.id)
-          : candidates().map(p => p.id);
+  const allowed = actionType === "guard"
+    ? state.players.filter(p => p.alive).map(p => p.id)
+    : actionType === "hunter"
+      ? state.players.filter(p => p.alive && p.id !== me.id).map(p => p.id)
+      : candidates().map(p => p.id);
 
   document.querySelectorAll("#gamePlayers .player").forEach((card, index) => {
     const p = state.players[index];
@@ -1370,41 +1286,43 @@ window.leaveGame = function(){
   const ok = confirm("🚪 ต้องการออกจากเกมใช่หรือไม่?");
   if(!ok) return;
 
-  // แจ้ง Server แต่ไม่รอ callback
-  socket.emit("leaveGame", {}, ()=>{});
+  socket.emit("leaveGame", {}, (r)=>{
+    if(r && r.error){
+      alert(r.error);
+      return;
+    }
 
-  // ล้างข้อมูล reconnect
-  localStorage.removeItem("ww_room");
-  localStorage.removeItem("ww_name");
+    // ล้างข้อมูล reconnect ของห้องเก่า
+    localStorage.removeItem("ww_room");
+    localStorage.removeItem("ww_name");
 
-  // ล้าง Client state
-  state = null;
-  me = null;
-  counts = {};
-  lastRoomCode = null;
+    // ล้าง state ฝั่ง Client ทั้งหมด
+    state = null;
+    me = null;
+    counts = {};
+    lastRoomCode = null;
 
-  window.selectedPlayerId = null;
-  window.playerCardAction = null;
-  window.cupidSelectedIds = [];
+    window.selectedPlayerId = null;
+    window.playerCardAction = null;
+    window.cupidSelectedIds = [];
 
-  // ล้าง Popup ที่อาจค้าง
-  document.getElementById("gameOverPopup")?.remove();
-  document.getElementById("deathPopup")?.remove();
-  document.getElementById("roleActionReminderPopup")?.remove();
-  document.getElementById("dayVoteReminderPopup")?.remove();
+    // ล้าง Popup ที่อาจค้าง
+    document.getElementById("gameOverPopup")?.remove();
+    document.getElementById("deathPopup")?.remove();
+    document.getElementById("phasePopup")?.remove();
 
-  const phasePopup = document.getElementById("phasePopup");
-  if(phasePopup) phasePopup.classList.add("hidden");
+    // ล้างค่าหน้าสร้าง/เข้าห้อง
+    const roomInput = document.getElementById("roomCode");
+    if(roomInput) roomInput.value = "";
 
-  // ล้างรหัสห้อง
-  const roomInput = document.getElementById("roomCode");
-  if(roomInput) roomInput.value = "";
+    // กลับหน้า Home โดยไม่ Reload
+    show("home");
 
-  // กลับหน้า Create / Join ทันที
-  show("home");
+    const homeMsg = document.getElementById("homeMsg");
+    if(homeMsg) homeMsg.textContent = "";
 
-  const homeMsg = document.getElementById("homeMsg");
-  if(homeMsg) homeMsg.textContent = "";
+    console.log("OK - Left game and client state cleared");
+  });
 };
 
 // ===== WOLF CHAT =====
@@ -1821,6 +1739,11 @@ function showRoleActionReminder(){
 
   document.body.appendChild(popup);
 
+  try {
+    const sound = new Audio("/sounds/death-bell.mp3");
+    sound.volume = 0.8;
+    sound.play().catch(()=>{});
+  } catch(e){}
 
   try {
     if(navigator.vibrate) navigator.vibrate([200,100,200]);
