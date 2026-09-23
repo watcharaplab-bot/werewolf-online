@@ -1065,6 +1065,7 @@ if (room.huntressUsed?.has(oldId)) {
     if (p.role !== "Huntress")
       return cb({ error: "เฉพาะพรานหญิงเท่านั้น" });
 
+    // ข้ามเฉพาะคืนนี้ ไม่ถือว่าใช้พลังถาวร
     room.actions[p.id] = { type: "huntressSkip" };
 
     cb({ ok: true });
@@ -1143,7 +1144,8 @@ if (room.huntressUsed?.has(oldId)) {
       // บันทึกทันที เพื่อให้ปุ่มหายหลังเลือก
       room.direCompanion = t.id;
       cb({ ok: true });
-      sendState(room);
+      if (allNightActionsDone(room)) resolveNight(room);
+    else sendState(room);
       return;
     }
 
