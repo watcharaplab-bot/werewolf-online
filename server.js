@@ -145,6 +145,10 @@ function getWolfTeamFor(room, viewer) {
 }
 
 function sendState(room) {
+  // TV Dashboard - freeze total game time when game really ends
+  if (room.phase === "gameover" && !room.tvEndedAt) {
+    room.tvEndedAt = Date.now();
+  }
   // 📺 อัปเดต TV Dashboard แบบ Real-time
   if (typeof sendDashboardState === "function") {
     sendDashboardState(room);
@@ -162,6 +166,7 @@ function sendState(room) {
       phase: room.phase, night: room.night, gameRound: room.gameRound || 0,
 
     gameStartedAt: room.gameStartedAt || null,
+      tvEndedAt: room.tvEndedAt || null,
     pendingHunter: room.pendingHunter || null,
     memorialDeaths: room.memorialDeaths || [],
     memorialEndsAt: room.memorialEndsAt || null, nightEndsAt: room.nightEndsAt || null, dayEndsAt: room.dayEndsAt || null, players: publicPlayers(room),
@@ -975,6 +980,10 @@ function dashboardState(room) {
     night: room.night || 0,
     gameRound: room.gameRound || 0,
 
+    // TV Dashboard - total game duration
+    gameStartedAt: room.gameStartedAt || null,
+    tvEndedAt: room.tvEndedAt || null,
+
     nightEndsAt: room.nightEndsAt || null,
     dayEndsAt: room.dayEndsAt || null,
     hunterEndsAt: room.hunterEndsAt || null,
@@ -1219,6 +1228,7 @@ if (room.huntressUsed?.has(oldId)) {
 
     // TV DASHBOARD V2 - NEW ROUND
     room.gameStartedAt = Date.now();
+  room.tvEndedAt = null;
     room.dashboardTimeline = [];
     room.memorialDeaths = [];
     room.memorialEndsAt = null;

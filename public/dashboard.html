@@ -1688,6 +1688,79 @@ body,
 
 </style>
 
+
+<style id="ROLE-CARD-PORTRAIT-FINAL">
+/* ROLE CARD PORTRAIT FINAL */
+
+#roles{
+  display:grid !important;
+  grid-template-columns:repeat(auto-fit,minmax(135px,1fr)) !important;
+  gap:16px !important;
+  align-items:start !important;
+}
+
+#roles .tvRoleCard,
+#roles .role{
+  min-height:0 !important;
+  padding:10px !important;
+  border-radius:18px !important;
+  background:linear-gradient(180deg,#202844,#11172b) !important;
+  border:1px solid rgba(255,255,255,.14) !important;
+  display:flex !important;
+  flex-direction:column !important;
+  align-items:center !important;
+  justify-content:flex-start !important;
+  gap:9px !important;
+  overflow:hidden !important;
+  box-shadow:0 10px 25px rgba(0,0,0,.30) !important;
+}
+
+/* รูปต้นฉบับเป็นแนวตั้งประมาณ 242x450 */
+#roles .tvRoleImg,
+#roles .tvRoleCard img,
+#roles .role img{
+  display:block !important;
+  width:100% !important;
+  height:auto !important;
+  aspect-ratio:242 / 450 !important;
+  object-fit:contain !important;
+  object-position:center !important;
+  border-radius:13px !important;
+  background:#0c1020 !important;
+  box-shadow:0 6px 16px rgba(0,0,0,.35) !important;
+}
+
+#roles .tvRoleName{
+  width:100% !important;
+  min-height:38px !important;
+  display:flex !important;
+  align-items:center !important;
+  justify-content:center !important;
+  text-align:center !important;
+  font-size:16px !important;
+  font-weight:800 !important;
+  line-height:1.2 !important;
+  color:#fff !important;
+}
+
+@media(max-width:650px){
+  #roles{
+    grid-template-columns:repeat(2,minmax(0,1fr)) !important;
+    gap:10px !important;
+  }
+
+  #roles .tvRoleCard,
+  #roles .role{
+    padding:7px !important;
+    border-radius:14px !important;
+  }
+
+  #roles .tvRoleName{
+    font-size:14px !important;
+  }
+}
+</style>
+
 </head>
 
 <body>
@@ -2502,36 +2575,32 @@ function tvUpdateGameClock(){
 
   const s=tvLastState;
 
-  if(!s || !s.started){
-    timer.textContent="--:--";
-    return;
-  }
-
-  const phase=String(s.phase || "").toLowerCase();
-  let endsAt=null;
-
-  if(phase==="night"){
-    endsAt=s.nightEndsAt;
-  }else if(phase==="day"){
-    endsAt=s.dayEndsAt;
-  }else if(phase==="hunter"){
-    endsAt=s.hunterEndsAt;
-  }else if(phase==="memorial"){
-    endsAt=s.memorialEndsAt;
-  }
-
-  if(phase==="gameover" || phase==="ended"){
+  // ยังไม่เริ่มเกม
+  if(!s || !s.started || !s.gameStartedAt){
     timer.textContent="00:00";
     return;
   }
 
-  if(!endsAt){
-    timer.textContent="--:--";
+  const startedAt=Number(s.gameStartedAt);
+  if(!startedAt){
+    timer.textContent="00:00";
     return;
   }
 
-  const remain=Math.max(0,Number(endsAt)-Date.now());
-  const totalSec=Math.ceil(remain/1000);
+  // เกมจบแล้ว ใช้เวลาจบที่ Server ส่งมา
+  // ถ้ายังเล่นอยู่ ใช้เวลาปัจจุบัน
+  let endTime=Date.now();
+
+  if(
+    (s.phase==="gameover" || s.phase==="ended") &&
+    Number(s.tvEndedAt)
+  ){
+    endTime=Number(s.tvEndedAt);
+  }
+
+  const elapsed=Math.max(0,endTime-startedAt);
+  const totalSec=Math.floor(elapsed/1000);
+
   const min=Math.floor(totalSec/60);
   const sec=totalSec%60;
 
@@ -2540,9 +2609,6 @@ function tvUpdateGameClock(){
     String(sec).padStart(2,"0");
 }
 
-
-
-/* ---------- POPUP ---------- */
 
 function tvHidePopup(){
   const pop=document.getElementById("tvV2Popup");
