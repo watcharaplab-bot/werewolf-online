@@ -159,7 +159,12 @@ function sendState(room) {
     };
     io.to(p.id).emit("state", {
       room: room.code, hostId: room.hostId, started: room.started,
-      phase: room.phase, night: room.night, gameRound: room.gameRound || 0, nightEndsAt: room.nightEndsAt || null, dayEndsAt: room.dayEndsAt || null, players: publicPlayers(room),
+      phase: room.phase, night: room.night, gameRound: room.gameRound || 0,
+
+    gameStartedAt: room.gameStartedAt || null,
+    pendingHunter: room.pendingHunter || null,
+    memorialDeaths: room.memorialDeaths || [],
+    memorialEndsAt: room.memorialEndsAt || null, nightEndsAt: room.nightEndsAt || null, dayEndsAt: room.dayEndsAt || null, players: publicPlayers(room),
         me,
 
       // ===== GAME OVER SUMMARY =====
@@ -482,6 +487,27 @@ function resolveHunterShot(room, targetId, auto=false) {
 }
 
 function resetRound(room) {
+  // ===== FULL ROUND RESET =====
+
+  // หยุด Timer รอบเก่าทั้งหมด
+  if (room.dayTimer) {
+    clearTimeout(room.dayTimer);
+    room.dayTimer = null;
+  }
+  if (room.nightTimer) {
+    clearTimeout(room.nightTimer);
+    room.nightTimer = null;
+  }
+
+  room.dayEndsAt = null;
+  room.nightEndsAt = null;
+
+  // ล้างข้อมูล Dashboard รอบเก่า
+  room.dashboardTimeline = [];
+  room.memorialDeaths = [];
+  room.memorialEndsAt = null;
+  room.winner = null;
+
   room.resolvingNight = false;
   room.started = false; room.phase = "lobby"; room.night = 0;
   room.roleCounts = {}; // รอบใหม่: ล้าง Role ที่ HOST เลือกจากรอบก่อน
@@ -566,9 +592,25 @@ function startNight(room) {
     }
   }
 
-  // ไม่มีเวลาจำกัดในช่วงกลางคืน
-  room.nightEndsAt = null;
+  // ===== NIGHT TIMER 30 SECONDS =====
+  room.nightEndsAt = Date.now() + 30000;
   room.nightDeathStart = room.deaths.length;
+
+  // ยกเลิก Timer เก่าถ้ามี
+  if (room.nightTimer) {
+    clearTimeout(room.nightTimer);
+    room.nightTimer = null;
+  }
+
+  // ครบ 30 วินาที ให้จบกลางคืนอัตโนมัติ
+  room.nightTimer = setTimeout(() => {
+    if (!room.started) return;
+    if (room.phase !== "night") return;
+    if (room.resolvingNight) return;
+
+    console.log("AUTO NIGHT TIMEOUT:", room.code, room.night);
+    resolveNight(room);
+  }, 30000);
 
   room.message = `🌙 คืนที่ ${room.night} — ผู้มีพลัง กรุณาเลือกการกระทำของคุณ`;
 
@@ -1168,12 +1210,21 @@ if (room.huntressUsed?.has(oldId)) {
   room.wolfChat = [];
 
   room.started = true;
+
+    // TV DASHBOARD V2 - NEW ROUND
+    room.gameStartedAt = Date.now();
+    room.dashboardTimeline = [];
+    room.memorialDeaths = [];
+    room.memorialEndsAt = null;
     room.winner = null;
     // เพิ่มเลขรอบเกมทุกครั้งที่ HOST เริ่มเกม
     room.gameRound = (room.gameRound || 0) + 1;
 
     assignRoles(room);
     startNight(room);
+
+    // TV DASHBOARD V2 - refresh immediately when new round starts
+    sendDashboardState(room);
     if (typeof cb === "function") cb({ ok: true });
   });
 
@@ -1508,7 +1559,21 @@ socket.on("hunterShot", ({ target }, cb) => {
 
   if (room.afterHunterPhase === "night") { startNight(room); return; } else { room.phase = "day";
     room.votes = {};
-    room.dayEndsAt = null;
+    room.dayEndsAt = Date.now() + 180000;
+
+    // ===== DAY TIMER : 3 MINUTES =====
+    if (room.dayTimer) {
+      clearTimeout(room.dayTimer);
+      room.dayTimer = null;
+    }
+
+    room.dayTimer = setTimeout(() => {
+      if (!room.started) return;
+      if (room.phase !== "day") return;
+
+      console.log("AUTO DAY TIMEOUT:", room.code);
+      finishDayVote(room);
+    }, 180000);
     room.message = "☀️ นายพรานยิงแล้ว - เข้าสู่ช่วงพูดคุยและโหวต";
 
     sendState(room);

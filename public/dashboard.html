@@ -1088,6 +1088,120 @@ body,
 
 </style>
 
+
+<style id="TV-ROLE-CARDS-V4">
+
+#roles{
+  display:grid !important;
+  grid-template-columns:repeat(auto-fit,minmax(125px,1fr));
+  gap:14px !important;
+  align-items:stretch;
+}
+
+#roles .tvRoleCard{
+  position:relative;
+  overflow:hidden;
+  min-height:175px;
+  padding:0 !important;
+  border-radius:18px;
+  border:1px solid rgba(255,255,255,.13);
+  background:
+    linear-gradient(180deg,
+      rgba(35,31,65,.96),
+      rgba(15,17,35,.98));
+  box-shadow:
+    0 10px 25px rgba(0,0,0,.28),
+    inset 0 1px 0 rgba(255,255,255,.08);
+  display:flex !important;
+  flex-direction:column;
+  align-items:center;
+  justify-content:flex-start;
+  transition:.2s ease;
+}
+
+#roles .tvRoleCard::after{
+  content:"";
+  position:absolute;
+  left:12%;
+  right:12%;
+  bottom:0;
+  height:2px;
+  background:linear-gradient(90deg,
+    transparent,
+    rgba(167,139,250,.9),
+    transparent);
+}
+
+.tvRoleImageWrap{
+  width:100%;
+  height:130px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  overflow:hidden;
+  background:
+    radial-gradient(circle at 50% 30%,
+      rgba(139,92,246,.22),
+      transparent 65%);
+}
+
+.tvRoleImage{
+  width:100%;
+  height:100%;
+  object-fit:cover;
+  object-position:center top;
+  display:block;
+}
+
+.tvRoleFallback{
+  font-size:64px;
+  filter:drop-shadow(0 8px 10px rgba(0,0,0,.4));
+}
+
+.tvRoleName{
+  width:100%;
+  min-height:45px;
+  padding:10px 6px 11px;
+  box-sizing:border-box;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  text-align:center;
+  font-size:17px;
+  line-height:1.2;
+  font-weight:800;
+  color:#f5f3ff;
+  letter-spacing:.2px;
+  background:
+    linear-gradient(180deg,
+      rgba(25,22,48,.8),
+      rgba(10,12,28,.96));
+}
+
+@media(max-width:700px){
+  #roles{
+    grid-template-columns:repeat(3,1fr);
+    gap:8px !important;
+  }
+
+  #roles .tvRoleCard{
+    min-height:135px;
+    border-radius:13px;
+  }
+
+  .tvRoleImageWrap{
+    height:98px;
+  }
+
+  .tvRoleName{
+    min-height:37px;
+    font-size:13px;
+    padding:7px 3px;
+  }
+}
+
+</style>
+
 </head>
 
 <body>
@@ -1286,14 +1400,44 @@ function renderDashboard(s){
 
   roleBox.innerHTML="";
 
+  // ===== ROLE CARDS WITH IMAGES =====
+  const roleImages={
+    Villager:"villager.png",
+    Seer:"seer.png",
+    Bodyguard:"bodyguard.png",
+    Hunter:"hunter.png",
+    Huntress:"huntress.png",
+    Cupid:"cupid.png",
+    Tanner:"tanner.png",
+    Diseased:"diseased.png",
+    Drunk:"drunk.png",
+    Werewolf:"werewolf.png",
+    WolfCub:"wolfcub.png",
+    DireWolf:"direwolf.png"
+  };
+
   (s.roles || []).forEach(r=>{
 
     const div=document.createElement("div");
+    div.className="role tvRoleCard";
 
-    div.className="role";
+    const roleKey=r.role || r.key || r.id || r.name || "";
+    const file=roleImages[roleKey] || roleImages[String(roleKey).replace(/\\s/g,"")];
 
-    div.textContent =
-      `${r.emoji || "🎭"} ${r.name}`;
+    div.innerHTML=`
+      <div class="tvRoleImageWrap">
+        ${file
+          ? `<img class="tvRoleImage"
+                  src="/images/roles/${file}"
+                  alt="${escapeHtml(r.name || roleKey)}">`
+          : `<div class="tvRoleFallback">${r.emoji || "🎭"}</div>`
+        }
+      </div>
+
+      <div class="tvRoleName">
+        ${escapeHtml(r.name || roleKey)}
+      </div>
+    `;
 
     roleBox.appendChild(div);
   });
@@ -1614,6 +1758,632 @@ function escapeHtml(v){
     .replaceAll('"',"&quot;")
     .replaceAll("'","&#039;");
 }
+</script>
+
+
+<!-- ===== TV-DASHBOARD-V2-FINAL ===== -->
+
+<style id="TV-DASHBOARD-V2-FINAL">
+
+/* ROLE IMAGE CARDS */
+#roles{
+  display:grid !important;
+  grid-template-columns:repeat(auto-fit,minmax(130px,1fr));
+  gap:14px !important;
+}
+
+#roles .tvRoleCard{
+  position:relative;
+  overflow:hidden;
+  min-height:175px;
+  border-radius:18px;
+  border:1px solid rgba(255,255,255,.13);
+  background:linear-gradient(180deg,#252342,#151426);
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  justify-content:flex-end;
+  padding:10px;
+  box-shadow:0 10px 30px rgba(0,0,0,.28);
+}
+
+#roles .tvRoleCard img{
+  position:absolute;
+  inset:0;
+  width:100%;
+  height:100%;
+  object-fit:cover;
+  opacity:.72;
+}
+
+#roles .tvRoleCard::after{
+  content:"";
+  position:absolute;
+  inset:35% 0 0;
+  background:linear-gradient(transparent,rgba(8,7,18,.98));
+}
+
+#roles .tvRoleName{
+  position:relative;
+  z-index:2;
+  width:100%;
+  text-align:center;
+  font-size:18px;
+  font-weight:900;
+  padding:8px 4px;
+  text-shadow:0 2px 8px #000;
+}
+
+
+/* GAME DURATION */
+#timer::before{
+  content:"⏱ เวลาเล่น ";
+  display:block;
+  font-size:13px;
+  font-weight:700;
+  opacity:.7;
+  margin-bottom:2px;
+}
+
+#timer{
+  font-variant-numeric:tabular-nums;
+}
+
+
+/* TV POPUP */
+#tvV2Popup{
+  display:none;
+  position:fixed;
+  inset:0;
+  z-index:999999;
+  align-items:center;
+  justify-content:center;
+  padding:5vw;
+  background:rgba(3,4,14,.78);
+  backdrop-filter:blur(10px);
+}
+
+#tvV2Popup.show{
+  display:flex;
+}
+
+#tvV2PopupBox{
+  width:min(900px,82vw);
+  min-height:300px;
+  box-sizing:border-box;
+  border-radius:34px;
+  padding:45px 55px;
+  border:2px solid rgba(255,255,255,.18);
+  background:
+    radial-gradient(circle at top,#34305d 0,#171528 55%,#0c0b15 100%);
+  box-shadow:
+    0 35px 100px rgba(0,0,0,.7),
+    0 0 60px rgba(125,92,255,.22);
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  justify-content:center;
+  text-align:center;
+}
+
+#tvV2PopupIcon{
+  font-size:76px;
+  margin-bottom:18px;
+}
+
+#tvV2PopupTitle{
+  font-size:clamp(34px,4vw,66px);
+  line-height:1.15;
+  font-weight:1000;
+}
+
+#tvV2PopupText{
+  margin-top:18px;
+  font-size:clamp(20px,2vw,32px);
+  line-height:1.45;
+  color:#d8d6e8;
+  white-space:pre-line;
+}
+
+#tvV2Popup.winner #tvV2PopupBox{
+  border-color:rgba(255,211,92,.65);
+  box-shadow:
+    0 35px 100px rgba(0,0,0,.7),
+    0 0 75px rgba(255,200,55,.3);
+}
+
+#tvV2Popup.hunter #tvV2PopupBox{
+  border-color:rgba(255,103,103,.65);
+}
+
+#tvV2Popup.death #tvV2PopupBox{
+  border-color:rgba(210,210,230,.35);
+}
+
+
+/* LARGE TV */
+@media (min-width:1600px){
+  #roles{
+    grid-template-columns:repeat(auto-fit,minmax(165px,1fr));
+  }
+
+  #roles .tvRoleCard{
+    min-height:220px;
+  }
+
+  #roles .tvRoleName{
+    font-size:22px;
+  }
+
+  #tvV2PopupBox{
+    width:min(1150px,78vw);
+    min-height:420px;
+  }
+
+  #tvV2PopupIcon{
+    font-size:100px;
+  }
+}
+
+</style>
+
+
+<div id="tvV2Popup">
+  <div id="tvV2PopupBox">
+    <div id="tvV2PopupIcon"></div>
+    <div id="tvV2PopupTitle"></div>
+    <div id="tvV2PopupText"></div>
+  </div>
+</div>
+
+
+<script>
+(() => {
+
+let tvLastState = null;
+let tvLastRound = null;
+let tvLastPhase = "";
+let tvLastMemorialKey = "";
+let tvPopupTimer = null;
+let tvWinnerShownRound = null;
+
+
+/* ---------- ROLE IMAGES ---------- */
+
+const TV_ROLE_IMAGES = {
+  Villager:"/images/roles/villager.png",
+  Seer:"/images/roles/seer.png",
+  Bodyguard:"/images/roles/bodyguard.png",
+  Hunter:"/images/roles/hunter.png",
+  Huntress:"/images/roles/huntress.png",
+  Cupid:"/images/roles/cupid.png",
+  Drunk:"/images/roles/drunk.png",
+  Diseased:"/images/roles/diseased.png",
+  Tanner:"/images/roles/tanner.png",
+  Werewolf:"/images/roles/werewolf.png",
+  WolfCub:"/images/roles/wolfcub.png",
+  Direwolf:"/images/roles/direwolf.png"
+};
+
+function tvRenderRoles(s){
+  const box=document.getElementById("roles");
+  if(!box) return;
+
+  box.innerHTML="";
+
+  (s.roles || []).forEach(r=>{
+    const card=document.createElement("div");
+    card.className="tvRoleCard";
+
+    const img=document.createElement("img");
+    img.src=TV_ROLE_IMAGES[r.key] || "/images/roles/villager.png";
+    img.alt=r.name || r.key || "Role";
+
+    const name=document.createElement("div");
+    name.className="tvRoleName";
+    name.textContent=(r.emoji ? r.emoji+" " : "")+(r.name || r.key || "ROLE");
+
+    card.appendChild(img);
+    card.appendChild(name);
+    box.appendChild(card);
+  });
+}
+
+
+/* ---------- GAME DURATION ---------- */
+
+function tvFormatDuration(ms){
+  const total=Math.max(0,Math.floor(ms/1000));
+  const h=Math.floor(total/3600);
+  const m=Math.floor((total%3600)/60);
+  const sec=total%60;
+
+  if(h>0){
+    return String(h).padStart(2,"0")+":"+
+           String(m).padStart(2,"0")+":"+
+           String(sec).padStart(2,"0");
+  }
+
+  return String(m).padStart(2,"0")+":"+
+         String(sec).padStart(2,"0");
+}
+
+function tvUpdateGameClock(){
+  const timer=document.getElementById("timer");
+  if(!timer) return;
+
+  const s=tvLastState;
+
+  if(!s || !s.started || !s.gameStartedAt){
+    timer.textContent="00:00";
+    return;
+  }
+
+  /*
+    gameover = หยุดเวลาที่ State ล่าสุดที่ได้รับ
+    ระหว่างเกม = นับขึ้นจาก gameStartedAt
+  */
+  const ended =
+    String(s.phase || "").toLowerCase()==="gameover" ||
+    String(s.phase || "").toLowerCase()==="ended";
+
+  if(ended){
+    if(!s.__tvEndedAt) s.__tvEndedAt=Date.now();
+    timer.textContent=tvFormatDuration(s.__tvEndedAt-s.gameStartedAt);
+  }else{
+    delete s.__tvEndedAt;
+    timer.textContent=tvFormatDuration(Date.now()-s.gameStartedAt);
+  }
+}
+
+
+/* ---------- POPUP ---------- */
+
+function tvHidePopup(){
+  const pop=document.getElementById("tvV2Popup");
+  if(!pop) return;
+
+  pop.className="";
+  pop.classList.remove("show");
+
+  if(tvPopupTimer){
+    clearTimeout(tvPopupTimer);
+    tvPopupTimer=null;
+  }
+}
+
+function tvShowPopup(type,icon,title,text,duration){
+  const pop=document.getElementById("tvV2Popup");
+  if(!pop) return;
+
+  if(tvPopupTimer){
+    clearTimeout(tvPopupTimer);
+    tvPopupTimer=null;
+  }
+
+  pop.className="show "+type;
+
+  document.getElementById("tvV2PopupIcon").textContent=icon || "";
+  document.getElementById("tvV2PopupTitle").textContent=title || "";
+  document.getElementById("tvV2PopupText").textContent=text || "";
+
+  if(duration){
+    tvPopupTimer=setTimeout(tvHidePopup,duration);
+  }
+}
+
+
+/* ---------- WINNER ---------- */
+
+function tvWinnerInfo(winner){
+  const w=String(winner || "").toLowerCase();
+
+  if(w==="werewolf"){
+    return {
+      icon:"🐺",
+      title:"ทีมมนุษย์หมาป่าเป็นผู้ชนะ",
+      text:"จบเกมแล้ว"
+    };
+  }
+
+  if(w==="village" || w==="villager"){
+    return {
+      icon:"🏆",
+      title:"ทีมมนุษย์เป็นผู้ชนะ",
+      text:"จบเกมแล้ว"
+    };
+  }
+
+  if(w==="tanner"){
+    return {
+      icon:"🎭",
+      title:"TANNER เป็นผู้ชนะ",
+      text:"จบเกมแล้ว"
+    };
+  }
+
+  if(w==="draw"){
+    return {
+      icon:"🤝",
+      title:"เกมจบลงด้วยผลเสมอ",
+      text:"จบเกมแล้ว"
+    };
+  }
+
+  return {
+    icon:"🏆",
+    title:"เกมจบแล้ว",
+    text:winner ? "ผู้ชนะ: "+winner : ""
+  };
+}
+
+
+/* ---------- MEMORIAL ---------- */
+
+function tvMemorialNames(s){
+  return Array.isArray(s.memorialDeaths)
+    ? s.memorialDeaths.filter(Boolean)
+    : [];
+}
+
+function tvHandleState(s){
+
+  const phase=String(s.phase || "").toLowerCase();
+  const round=Number(s.gameRound || 0);
+
+// ===== NEW ROUND HARD RESET =====
+// gameRound เปลี่ยน = เริ่มเกมรอบใหม่
+if(tvLastRound!==null && round!==tvLastRound){
+  tvHidePopup();
+
+  // อนุญาต Winner ของรอบใหม่
+  tvWinnerShownRound=null;
+
+  // ล้าง Memorial เก่า
+  tvLastMemorialKey="";
+
+  // ล้างสถานะ phase เก่า
+  tvLastPhase="";
+
+  // ล้าง Timeline บน Dashboard
+  const timeline=document.getElementById("timeline");
+  if(timeline) timeline.innerHTML="";
+
+  // ล้างข้อความผู้ชนะ/สถานะเก่าที่อาจค้าง
+  const status=document.getElementById("gameStatus");
+  if(status) status.textContent="";
+
+  console.log("TV NEW ROUND RESET:",tvLastRound,"->",round);
+}
+
+tvLastRound=round;
+
+  /*
+    NEW ROUND:
+    ล้าง Popup / Timeline visual state / ตัวจับ event รอบเก่า
+  */
+  if(tvLastRound!==null && round!==tvLastRound){
+    tvHidePopup();
+    tvLastMemorialKey="";
+    tvWinnerShownRound=null;
+  }
+
+  tvLastRound=round;
+
+  tvRenderRoles(s);
+
+
+  /*
+    HUNTER POPUP
+    ค้างจน phase ไม่ใช่ hunter หรือ pendingHunter หาย
+  */
+  if(phase==="hunter" && s.pendingHunter){
+    tvShowPopup(
+      "hunter",
+      "🏹",
+      "โปรดรอนายพราน",
+      "นายพรานกำลังเลือกผู้ที่จะสังหาร",
+      0
+    );
+
+    tvLastPhase=phase;
+    return;
+  }
+
+  if(tvLastPhase==="hunter" && phase!=="hunter"){
+    tvHidePopup();
+  }
+
+
+  /*
+    GAME OVER POPUP
+    ค้างไว้เพื่อให้ทุกคนเห็นผลชัดเจน
+  */
+  if((phase==="gameover" || phase==="ended") &&
+     tvWinnerShownRound!==round){
+
+    const info=tvWinnerInfo(s.winner);
+
+    tvShowPopup(
+      "winner",
+      info.icon,
+      info.title,
+      info.text,
+      0
+    );
+
+    tvWinnerShownRound=round;
+    tvLastPhase=phase;
+    return;
+  }
+
+
+  /*
+    DEATH / NO DEATH POPUP
+    แสดงเมื่อเข้า Memorial
+    แล้วหายเองหลัง 10 วินาที
+  */
+  if(phase==="memorial"){
+    const names=tvMemorialNames(s);
+
+    const key=
+      round+"|"+
+      String(s.night || 0)+"|"+
+      names.join("|");
+
+    if(key!==tvLastMemorialKey){
+
+      tvLastMemorialKey=key;
+
+      if(names.length){
+        tvShowPopup(
+          "death",
+          "💀",
+          names.length>1
+            ? "มีผู้เสียชีวิต "+names.length+" คน"
+            : "มีผู้เสียชีวิต",
+          names.join("\n"),
+          10000
+        );
+      }else{
+        tvShowPopup(
+          "death",
+          "🌅",
+          "ไม่มีผู้เสียชีวิต",
+          "ทุกคนยังมีชีวิตอยู่",
+          10000
+        );
+      }
+    }
+  }
+
+  tvLastPhase=phase;
+}
+
+
+/*
+  จับ dashboardState เดิมโดยไม่รื้อ renderDashboard()
+*/
+if(typeof socket!=="undefined"){
+  socket.on("dashboardState",s=>{
+    tvLastState=s;
+    tvHandleState(s);
+  });
+}
+
+
+/* เวลาเล่นเกมรวม */
+setInterval(tvUpdateGameClock,250);
+
+})();
+</script>
+
+
+<!-- TV-ROLE-IMAGES-V3 -->
+<style id="TV-ROLE-IMAGES-V3">
+#roles{
+  display:grid !important;
+  grid-template-columns:repeat(auto-fit,minmax(150px,1fr));
+  gap:14px !important;
+}
+
+#roles .role{
+  min-height:190px;
+  padding:14px 10px !important;
+  border-radius:18px !important;
+  background:linear-gradient(180deg,#202844,#11172b) !important;
+  border:1px solid rgba(255,255,255,.12) !important;
+  display:flex !important;
+  flex-direction:column;
+  align-items:center;
+  justify-content:center;
+  text-align:center;
+  gap:9px;
+  overflow:hidden;
+  box-shadow:0 8px 24px rgba(0,0,0,.22);
+}
+
+.tvRoleImg{
+  width:105px;
+  height:105px;
+  object-fit:cover;
+  object-position:center;
+  border-radius:16px;
+  display:block;
+  box-shadow:0 8px 20px rgba(0,0,0,.35);
+}
+
+.tvRoleName{
+  font-size:17px;
+  font-weight:800;
+  line-height:1.2;
+  color:#fff;
+}
+
+@media(max-width:650px){
+  #roles{
+    grid-template-columns:repeat(2,1fr) !important;
+  }
+
+  #roles .role{
+    min-height:155px;
+  }
+
+  .tvRoleImg{
+    width:82px;
+    height:82px;
+  }
+
+  .tvRoleName{
+    font-size:14px;
+  }
+}
+</style>
+
+<script>
+(()=>{
+ const ROLE_IMAGES={
+   Villager:"/images/roles/villager.png",
+   Seer:"/images/roles/seer.png",
+   Bodyguard:"/images/roles/bodyguard.png",
+   Hunter:"/images/roles/hunter.png",
+   Cupid:"/images/roles/cupid.png",
+   Tanner:"/images/roles/tanner.png",
+   Diseased:"/images/roles/diseased.png",
+   Huntress:"/images/roles/huntress.png",
+   Drunk:"/images/roles/drunk.png",
+   Werewolf:"/images/roles/werewolf.png",
+   WolfCub:"/images/roles/wolfcub.png",
+   DireWolf:"/images/roles/direwolf.png"
+ };
+
+ window.tvRenderRoles=function(state){
+   const box=document.getElementById("roles");
+   if(!box) return;
+
+   box.innerHTML="";
+
+   const roles=Array.isArray(state?.roles) ? state.roles : [];
+
+   roles.forEach(r=>{
+     const card=document.createElement("div");
+     card.className="role";
+
+     const img=document.createElement("img");
+     img.className="tvRoleImg";
+     img.src=ROLE_IMAGES[r.key] || "/werewolf-card-back.png";
+     img.alt=r.name || r.key || "Role";
+
+     const name=document.createElement("div");
+     name.className="tvRoleName";
+     name.textContent=(r.emoji ? r.emoji+" " : "")+(r.name || r.key || "Role");
+
+     card.appendChild(img);
+     card.appendChild(name);
+     box.appendChild(card);
+   });
+ };
+})();
 </script>
 
 </body>
