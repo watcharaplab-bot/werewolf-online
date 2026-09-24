@@ -1595,6 +1595,99 @@ body,
 
 </style>
 
+
+<style id="TV-ROLE-SIZE-V5">
+
+/* ===== ROLE CARD SIZE FINAL ===== */
+
+#roles{
+  display:grid !important;
+  grid-template-columns:repeat(auto-fit,minmax(150px,190px)) !important;
+  gap:14px !important;
+  justify-content:start !important;
+  align-items:start !important;
+}
+
+#roles .tvRoleCard{
+  width:100% !important;
+  min-height:0 !important;
+  height:auto !important;
+  border-radius:14px !important;
+  overflow:hidden !important;
+}
+
+#roles .tvRoleImageWrap{
+  width:100% !important;
+  height:115px !important;
+  min-height:115px !important;
+  overflow:hidden !important;
+  display:flex !important;
+  align-items:center !important;
+  justify-content:center !important;
+  background:#090b18 !important;
+}
+
+#roles .tvRoleImageWrap img,
+#roles .tvRoleImage{
+  width:100% !important;
+  height:100% !important;
+  object-fit:cover !important;
+  object-position:center 25% !important;
+  display:block !important;
+}
+
+#roles .tvRoleName{
+  width:100% !important;
+  min-height:42px !important;
+  padding:9px 5px !important;
+  font-size:15px !important;
+  line-height:1.2 !important;
+  display:flex !important;
+  align-items:center !important;
+  justify-content:center !important;
+  text-align:center !important;
+  box-sizing:border-box !important;
+}
+
+/* TV / จอใหญ่ */
+@media (min-width:1600px){
+  #roles{
+    grid-template-columns:repeat(auto-fit,minmax(170px,205px)) !important;
+    gap:16px !important;
+  }
+
+  #roles .tvRoleImageWrap{
+    height:125px !important;
+    min-height:125px !important;
+  }
+
+  #roles .tvRoleName{
+    font-size:17px !important;
+    min-height:46px !important;
+  }
+}
+
+/* มือถือ */
+@media (max-width:700px){
+  #roles{
+    grid-template-columns:repeat(3,1fr) !important;
+    gap:8px !important;
+  }
+
+  #roles .tvRoleImageWrap{
+    height:82px !important;
+    min-height:82px !important;
+  }
+
+  #roles .tvRoleName{
+    font-size:12px !important;
+    min-height:36px !important;
+    padding:6px 3px !important;
+  }
+}
+
+</style>
+
 </head>
 
 <body>
@@ -1629,6 +1722,8 @@ body,
       <div class="brand">🐺 WEREWOLF ONLINE</div>
       <div class="room">
         ROOM : <b id="roomLabel">----</b>
+<br>
+🎮 รอบที่ <b id="gameRoundLabel">0</b>
       </div>
     </div>
 
@@ -2407,27 +2502,44 @@ function tvUpdateGameClock(){
 
   const s=tvLastState;
 
-  if(!s || !s.started || !s.gameStartedAt){
+  if(!s || !s.started){
+    timer.textContent="--:--";
+    return;
+  }
+
+  const phase=String(s.phase || "").toLowerCase();
+  let endsAt=null;
+
+  if(phase==="night"){
+    endsAt=s.nightEndsAt;
+  }else if(phase==="day"){
+    endsAt=s.dayEndsAt;
+  }else if(phase==="hunter"){
+    endsAt=s.hunterEndsAt;
+  }else if(phase==="memorial"){
+    endsAt=s.memorialEndsAt;
+  }
+
+  if(phase==="gameover" || phase==="ended"){
     timer.textContent="00:00";
     return;
   }
 
-  /*
-    gameover = หยุดเวลาที่ State ล่าสุดที่ได้รับ
-    ระหว่างเกม = นับขึ้นจาก gameStartedAt
-  */
-  const ended =
-    String(s.phase || "").toLowerCase()==="gameover" ||
-    String(s.phase || "").toLowerCase()==="ended";
-
-  if(ended){
-    if(!s.__tvEndedAt) s.__tvEndedAt=Date.now();
-    timer.textContent=tvFormatDuration(s.__tvEndedAt-s.gameStartedAt);
-  }else{
-    delete s.__tvEndedAt;
-    timer.textContent=tvFormatDuration(Date.now()-s.gameStartedAt);
+  if(!endsAt){
+    timer.textContent="--:--";
+    return;
   }
+
+  const remain=Math.max(0,Number(endsAt)-Date.now());
+  const totalSec=Math.ceil(remain/1000);
+  const min=Math.floor(totalSec/60);
+  const sec=totalSec%60;
+
+  timer.textContent=
+    String(min).padStart(2,"0")+":"+
+    String(sec).padStart(2,"0");
 }
+
 
 
 /* ---------- POPUP ---------- */
@@ -2524,6 +2636,11 @@ function tvHandleState(s){
   const phase=String(s.phase || "").toLowerCase();
   const round=Number(s.gameRound || 0);
 
+  const gameRoundLabel=document.getElementById("gameRoundLabel");
+  if(gameRoundLabel){
+    gameRoundLabel.textContent=round || 0;
+  }
+
 // ===== NEW ROUND HARD RESET =====
 // gameRound เปลี่ยน = เริ่มเกมรอบใหม่
 if(tvLastRound!==null && round!==tvLastRound){
@@ -2597,11 +2714,95 @@ tvLastRound=round;
 
     const info=tvWinnerInfo(s.winner);
 
-    tvShowPopup(
-      "winner",
-      info.icon,
-      info.title,
-      info.text,
+    // ===== SURVIVORS : แสดงผู้รอดชีวิตก่อน =====
+    const summary=Array.isArray(s.gameSummary) ? s.gameSummary : [];
+    const survivors=summary.filter(p=>p.alive);
+
+    let survivorText="";
+    if(survivors.length){
+      survivorText=
+        "❤️ ผู้รอดชีวิต\n\n"+
+        survivors.map(p=>{
+          const role=p.trueRoleName || p.roleName || p.role || "";
+          const emoji=p.trueRoleEmoji || p.emoji || "🎭";
+          return "• "+p.name+" — "+emoji+" "+role;
+        }).join("\n");
+    }else{
+      survivorText="💀 ไม่มีผู้รอดชีวิต";
+    }
+
+
+      // ===== TEAM SUMMARY =====
+      const wolfRoles=["Werewolf","WolfCub","DireWolf"];
+
+      const wolfTeam=summary.filter(p=>{
+        const role=p.trueRole || p.role || "";
+        return wolfRoles.includes(role);
+      });
+
+      const villageTeam=summary.filter(p=>{
+        const role=p.trueRole || p.role || "";
+        return !wolfRoles.includes(role) && role!=="Tanner";
+      });
+
+      const tannerTeam=summary.filter(p=>{
+        const role=p.trueRole || p.role || "";
+        return role==="Tanner";
+      });
+
+      const playerLine=(p)=>{
+        const role=p.trueRoleName || p.roleName || p.role || "";
+        const emoji=p.trueRoleEmoji || p.emoji || "🎭";
+        const life=p.alive ? "❤️" : "💀";
+        return life+" "+p.name+" — "+emoji+" "+role;
+      };
+
+      let teamText="";
+
+      if(villageTeam.length){
+        teamText+="\n\n🏘️ ทีมชาวบ้าน\n"+
+          villageTeam.map(playerLine).join("\n");
+      }
+
+      if(wolfTeam.length){
+        teamText+="\n\n🐺 ทีมมนุษย์หมาป่า\n"+
+          wolfTeam.map(playerLine).join("\n");
+      }
+
+      if(tannerTeam.length){
+        teamText+="\n\n🤡 TANNER\n"+
+          tannerTeam.map(playerLine).join("\n");
+      }
+
+    // ===== DEATH ORDER =====
+      const deathTimeline=Array.isArray(s.timeline) ? s.timeline : [];
+      let deathText="";
+
+      if(deathTimeline.length){
+        const reasonMap={
+          "Vote":"ถูกโหวตออก",
+          "Hunter":"ถูกนายพรานยิง",
+          "Hunter Auto":"ถูกนายพรานยิง",
+          "Lover":"ตายตามคู่รัก",
+          "Wolf":"ถูกหมาป่าฆ่า",
+          "Werewolf":"ถูกหมาป่าฆ่า",
+          "Dire Wolf companion":"ตายจากพันธะหมาป่าโลกัน"
+        };
+
+        deathText="\n\n💀 ลำดับการตาย\n"+
+          deathTimeline.map((d,index)=>{
+            const reason=reasonMap[d.reason] || d.reason || "เสียชีวิต";
+            return (index+1)+". 💀 "+d.name+" — "+reason;
+          }).join("\n");
+      }else{
+        deathText="\n\n💀 ลำดับการตาย\nไม่มีผู้เสียชีวิต";
+      }
+
+      tvShowPopup(
+        "winner",
+        info.icon,
+        info.title,
+      survivorText+teamText+deathText,
       0
     );
 
