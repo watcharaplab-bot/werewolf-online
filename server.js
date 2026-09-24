@@ -570,20 +570,24 @@ function availableActions(room, p) {
   )
     actions.push("cupid");
 
-  if (isWolf(p.role))
+  // DireWolf:
+  // ยังไม่ผูก = เลือก Companion
+  // ผูกแล้ว = เลือกฆ่า
+  if (p.role === "DireWolf") {
+    if (!room.direCompanion) {
+      actions.push("companion");
+    } else {
+      actions.push("wolf");
+    }
+  } else if (isWolf(p.role)) {
     actions.push("wolf");
+  }
 
   if (
     p.role === "Huntress" &&
     !room.huntressUsed.has(p.id)
   )
     actions.push("huntress", "huntressSkip");
-
-  if (
-    p.role === "DireWolf" &&
-    !room.direCompanion
-  )
-    actions.push("companion");
 
   return actions;
 }
@@ -613,7 +617,10 @@ function resolveNight(room) {
     room.actions[dire.id]?.type === "companion"
   ) {
     const target = aliveById(room, room.actions[dire.id].target);
-    if (target && target.id !== dire.id) room.direCompanion = target.id;
+    if (target && target.id !== dire.id) {
+      room.direCompanion = target.id;
+      delete room.actions[dire.id];
+    }
   }
 
   // Guard
@@ -1142,11 +1149,15 @@ if (room.huntressUsed?.has(oldId)) {
       if (!t || t.id === p.id)
         return cb({ error: "เป้าหมายไม่ถูกต้อง" });
 
-      // บันทึกทันที เพื่อให้ปุ่มหายหลังเลือก
-      room.direCompanion = t.id;
+      // บันทึก Companion
+      room.direCompanion = target.id;
+
+      // Companion เป็นเพียงขั้นเลือกคู่ ไม่ใช่ Action ฆ่า
+      // ล้าง Action เดิม เพื่อให้ DireWolf เลือกเหยื่อต่อในคืนเดียวกัน
+      delete room.actions[p.id];
+
       cb({ ok: true });
-      if (allNightActionsDone(room)) resolveNight(room);
-    else sendState(room);
+      sendState(room);
       return;
     }
 

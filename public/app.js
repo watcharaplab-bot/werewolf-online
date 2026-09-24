@@ -710,7 +710,22 @@ function renderNight(){
 
   if(me.role==="DireWolf" && state.night===1 && !state.direCompanion){
   $("actionTitle").textContent="🐺 เลือก Companion";
-  setupPlayerCardSelection("companion","เลือก Companion จากรายชื่อผู้เล่น","✓ ยืนยัน Companion");
+  setupPlayerCardSelection(
+    "companion",
+    "เลือก Companion จากรายชื่อผู้เล่น",
+    "✓ ยืนยัน Companion"
+  );
+  return;
+}
+
+// DireWolf เลือก Companion แล้ว ต้องไปเลือกเหยื่อต่อทันที
+if(me.role==="DireWolf" && state.direCompanion && !state.myNightAction){
+  $("actionTitle").textContent="🐺 เลือกเหยื่อ";
+  setupPlayerCardSelection(
+    "wolf",
+    "เลือก 1 เหยื่อจากรายชื่อผู้เล่น",
+    "✓ ยืนยันเป้าหมาย"
+  );
   return;
 }
     if(
@@ -789,7 +804,15 @@ function act(type,data={}){
     }
     document.getElementById("roleActionReminderPopup")?.remove();
 
-    // Wolf ต้องสามารถเปลี่ยนเป้าหมายได้
+    // DireWolf: เลือก Companion สำเร็จแล้ว
+      // Server จะส่ง state ใหม่กลับมา แล้ว renderNight จะเปลี่ยนเป็นเลือกฆ่า
+      if(type==="companion"){
+        $("actions").innerHTML=
+          `<div class="notice">✅ ผูก Companion สำเร็จ — กำลังเปิดให้เลือกเหยื่อ...</div>`;
+        return;
+      }
+
+      // Wolf ต้องสามารถเปลี่ยนเป้าหมายได้
     // รอ state ล่าสุดจาก Server แล้ว render ใหม่
     if(type==="wolf"){
       return;
@@ -802,7 +825,9 @@ function act(type,data={}){
 window.submitWolf=id=>act("wolf",{target:id});
 window.submitSeer=id=>act("seer",{target:id});
 window.submitGuard=id=>act("guard",{target:id});
-window.submitCompanion=id=>act("companion",{target:id});
+window.submitCompanion=id=>{
+  act("companion",{target:id});
+};
 window.chooseHuntress=()=>{setupPlayerCardSelection("huntress","เลือกเป้าหมายจากรายชื่อผู้เล่น","✓ ยืนยันเป้าหมาย")};
 window.submitHuntress=id=>act("huntress",{target:id});
 window.pickCup=id=>{if(!window.cupA)window.cupA=id;else if(window.cupA!==id)window.cupB=id;document.querySelectorAll("#cup .target").forEach(b=>b.classList.remove("selected"));if(window.cupA)$("cup-"+window.cupA)?.classList.add("selected");if(window.cupB)$("cup-"+window.cupB)?.classList.add("selected")};
