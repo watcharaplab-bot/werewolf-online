@@ -780,6 +780,12 @@ if(me.role==="DireWolf" && state.direCompanion && !state.myNightAction){
   if(me.role==="Huntress"){
     $("actionTitle").textContent="🏹 พรานหญิง";
 
+    // กดไม่ใช้พลังแล้ว -> ซ่อนปุ่มเฉพาะคืนนี้
+    if(state.myNightAction?.type === "huntressSkip"){
+      $("actions").innerHTML='<div class="notice">✅ คืนนี้คุณเลือกไม่ใช้พลังแล้ว</div>';
+      return;
+    }
+
     // พรานหญิงยิงได้เพียง 1 ครั้งตลอดทั้งเกม
     if(state.huntressUsed){
       $("actions").innerHTML='<div class="notice">🏹 คุณใช้ความสามารถยิงไปแล้ว</div>';
