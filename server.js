@@ -67,6 +67,7 @@ function newRoom(code, hostId) {
     code, hostId, players: new Map(), roleCounts: {},
     started: false, phase: "lobby", night: 0,
     actions: {}, votes: {}, deaths: [], lovers: [],
+    dashboardTimeline: [],
     direCompanion: null, wolfCubBonus: false,
     diseasedBlocked: false, huntressUsed: new Set(),
     lastGuardTarget: null, winner: null,
@@ -144,6 +145,11 @@ function getWolfTeamFor(room, viewer) {
 }
 
 function sendState(room) {
+  // 📺 อัปเดต TV Dashboard แบบ Real-time
+  if (typeof sendDashboardState === "function") {
+    sendDashboardState(room);
+  }
+
   for (const p of room.players.values()) {
     const me = {
       id: p.id, name: p.name, alive: p.alive, role: p.role,
@@ -347,6 +353,17 @@ function kill(room, id, reason = "") {
   if (!p || !p.alive) return [];
   p.alive = false;
   p.deathReason = reason;
+
+  // 📺 Dashboard Timeline
+  if (!room.dashboardTimeline) room.dashboardTimeline = [];
+
+  room.dashboardTimeline.push({
+    name: p.name,
+    reason: reason || "Unknown",
+    phase: room.phase || "",
+    night: room.night || 0,
+    time: Date.now()
+  });
   if (p.role === "Hunter") room.pendingHunter = id;
   if (p.role === "WolfCub") room.wolfCubBonus = true;
   const killed = [id];
@@ -359,6 +376,17 @@ function kill(room, id, reason = "") {
     if (lp && lp.alive) {
       lp.alive = false;
       lp.deathReason = "Lover";
+
+      // 📺 Dashboard Timeline - Lover
+      if (!room.dashboardTimeline) room.dashboardTimeline = [];
+      room.dashboardTimeline.push({
+        name: lp.name,
+        reason: "Lover",
+        phase: room.phase || "",
+        night: room.night || 0,
+        time: Date.now()
+      });
+
       killed.push(lover);
     if (lp.role === "Hunter") room.pendingHunter = lover;
       if (lp.role === "WolfCub") room.wolfCubBonus = true;
@@ -901,7 +929,97 @@ function allNightActionsDone(room) {
   return true;
 }
 
+
+// ======================================================
+// 📺 TV DASHBOARD / SPECTATOR MODE
+// เข้า Dashboard ด้วย Room Code
+// ไม่เพิ่มเป็น Player / ไม่มี Role / ไม่มีสิทธิ์โหวต
+// ======================================================
+
+function dashboardState(room) {
+  const roleKeys = Object.entries(room.roleCounts || {})
+    .filter(([role, count]) => Number(count) > 0)
+    .map(([role]) => role);
+
+  return {
+    room: room.code,
+    started: room.started,
+    phase: room.phase,
+    night: room.night || 0,
+    gameRound: room.gameRound || 0,
+
+    nightEndsAt: room.nightEndsAt || null,
+    dayEndsAt: room.dayEndsAt || null,
+    hunterEndsAt: room.hunterEndsAt || null,
+
+    winner: room.winner || null,
+
+    players: [...room.players.values()].map(player => ({
+      name: player.name,
+      alive: player.alive
+    })),
+
+    timeline: room.dashboardTimeline || [],
+
+    // ส่งเฉพาะชื่อ Role ที่มีในเกม
+    // ไม่ส่งจำนวน และไม่ส่งว่าใครเป็น Role ไหน
+    roles: roleKeys.map(role => ({
+      key: role,
+      name: ROLE_INFO[role]?.name || role,
+      emoji: ROLE_INFO[role]?.emoji || "🎭"
+    }))
+  };
+}
+
+function sendDashboardState(room) {
+  io.to("dashboard:" + room.code).emit(
+    "dashboardState",
+    dashboardState(room)
+  );
+}
+
+
 io.on("connection", socket => {
+
+  // ===== 📺 JOIN TV DASHBOARD =====
+  socket.on("joinDashboard", ({ code }, cb) => {
+    code = String(code || "").trim().toUpperCase();
+
+    const room = rooms.get(code);
+
+    if (!room) {
+      return cb({ ok: false, error: "ไม่พบห้องนี้" });
+    }
+
+    // Dashboard อยู่คนละ Socket.IO room กับ Player
+    // จึงไม่ถูกนับเป็นผู้เล่น
+    socket.join("dashboard:" + code);
+
+    cb({
+      ok: true,
+      code: room.code
+    });
+
+    socket.emit(
+      "dashboardState",
+      dashboardState(room)
+    );
+  });
+
+  // Dashboard ขอ Refresh ข้อมูลได้
+  socket.on("refreshDashboard", ({ code }) => {
+    code = String(code || "").trim().toUpperCase();
+
+    const room = rooms.get(code);
+    if (!room) return;
+
+    socket.emit(
+      "dashboardState",
+      dashboardState(room)
+    );
+  });
+
+
   // Used by the browser to detect a stale room after restart/republish.
   socket.on("checkRoom", ({ code }, cb) => {
     code = String(code || "").trim().toUpperCase();

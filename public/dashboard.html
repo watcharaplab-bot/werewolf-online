@@ -1,0 +1,1620 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Werewolf Online - TV Dashboard</title>
+  <script src="/socket.io/socket.io.js"></script>
+
+  <style>
+    * { box-sizing:border-box; }
+
+    body {
+      margin:0;
+      min-height:100vh;
+      font-family:Arial, sans-serif;
+      color:#fff;
+      background:
+        radial-gradient(circle at 50% -10%, #263867 0%, transparent 40%),
+        linear-gradient(180deg,#0b1328,#060b17);
+    }
+
+    #joinScreen {
+      min-height:100vh;
+      display:flex;
+      justify-content:center;
+      align-items:center;
+      padding:30px;
+    }
+
+    .joinBox {
+      width:min(600px,92vw);
+      padding:45px;
+      text-align:center;
+      border-radius:28px;
+      background:#111b34;
+      border:1px solid #33446e;
+      box-shadow:0 25px 80px #0008;
+    }
+
+    .wolf { font-size:75px; }
+
+    h1 {
+      margin:10px 0;
+      font-size:42px;
+    }
+
+    .subtitle {
+      color:#9da9c7;
+      font-size:20px;
+      margin-bottom:30px;
+    }
+
+    #roomCode {
+      width:100%;
+      padding:18px;
+      font-size:30px;
+      text-align:center;
+      text-transform:uppercase;
+      border-radius:15px;
+      border:1px solid #42557f;
+      background:#081124;
+      color:#fff;
+      outline:none;
+      letter-spacing:8px;
+    }
+
+    #openBtn {
+      width:100%;
+      margin-top:16px;
+      padding:18px;
+      border:0;
+      border-radius:15px;
+      font-size:23px;
+      font-weight:bold;
+      cursor:pointer;
+      color:white;
+      background:linear-gradient(90deg,#6b43ff,#8b5cff);
+    }
+
+    #joinError {
+      min-height:24px;
+      color:#ff7070;
+      margin-top:15px;
+    }
+
+    #dashboard {
+      display:none;
+      min-height:100vh;
+      padding:2vh 2vw;
+    }
+
+    .top {
+      display:grid;
+      grid-template-columns:1fr 1.5fr 1fr;
+      gap:1.2vw;
+      align-items:center;
+      margin-bottom:1.5vh;
+    }
+
+    .brand {
+      font-size:2vw;
+      font-weight:bold;
+    }
+
+    .room {
+      color:#aab5d2;
+      font-size:1.1vw;
+      margin-top:6px;
+    }
+
+    .phaseBox {
+      text-align:center;
+      padding:1.4vh;
+      border-radius:18px;
+      background:#131e39;
+      border:1px solid #34466d;
+    }
+
+    #phase {
+      font-size:2vw;
+      font-weight:bold;
+    }
+
+    #timer {
+      font-size:3vw;
+      font-weight:bold;
+      margin-top:5px;
+    }
+
+    .stats {
+      text-align:right;
+      font-size:1.2vw;
+      line-height:1.8;
+    }
+
+    .grid {
+      display:grid;
+      grid-template-columns:1.4fr 1fr;
+      gap:1.3vw;
+    }
+
+    .card {
+      background:#101a31e8;
+      border:1px solid #2e4067;
+      border-radius:20px;
+      padding:1.3vw;
+      box-shadow:0 10px 35px #0004;
+    }
+
+    .card h2 {
+      margin:0 0 1.2vh;
+      font-size:1.45vw;
+    }
+
+    #players {
+      display:grid;
+      grid-template-columns:repeat(2,1fr);
+      gap:.65vw;
+    }
+
+    .player {
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      padding:.8vw 1vw;
+      border-radius:13px;
+      background:#182440;
+      font-size:1.1vw;
+    }
+
+    .player.dead {
+      opacity:.55;
+      background:#171b29;
+    }
+
+    .aliveText { color:#63e69c; }
+    .deadText { color:#ff7777; }
+
+    #roles {
+      display:flex;
+      flex-wrap:wrap;
+      gap:.7vw;
+    }
+
+    .role {
+      padding:.75vw 1vw;
+      border-radius:12px;
+      background:#1a2748;
+      border:1px solid #374c7a;
+      font-size:1vw;
+    }
+
+    .roleNote {
+      margin-top:1.2vh;
+      color:#8794b4;
+      font-size:.9vw;
+    }
+
+    .timeline {
+      margin-top:1.3vw;
+      min-height:16vh;
+    }
+
+    #statusMessage {
+      color:#b8c3de;
+      font-size:1.1vw;
+      line-height:1.7;
+    }
+
+    @media(max-width:900px) {
+      .top { grid-template-columns:1fr; }
+      .grid { grid-template-columns:1fr; }
+      .brand,#phase { font-size:24px; }
+      #timer { font-size:42px; }
+      .room,.stats,.player,#statusMessage { font-size:16px; }
+      .card h2 { font-size:20px; }
+      .role,.roleNote { font-size:15px; }
+    }
+  </style>
+
+<style id="TV-DASHBOARD-V2">
+
+/* =========================================
+   📺 WEREWOLF TV DASHBOARD V2
+   16:9 / Full HD / TV Friendly
+   ========================================= */
+
+html, body {
+  width:100%;
+  min-height:100%;
+  margin:0;
+  overflow-x:hidden;
+}
+
+body {
+  background:
+    radial-gradient(circle at 50% -20%, #293a69 0%, transparent 45%),
+    linear-gradient(180deg,#10182c 0%,#070c17 65%,#04070d 100%);
+}
+
+/* ---------- MAIN TV SCREEN ---------- */
+
+#dashboard {
+  width:100%;
+  min-height:100vh;
+  padding:22px 28px 28px;
+}
+
+/* ---------- TOP BAR ---------- */
+
+.top {
+  min-height:125px;
+  display:grid;
+  grid-template-columns:1fr 1.15fr 1fr;
+  gap:18px;
+  align-items:stretch;
+  margin-bottom:18px;
+}
+
+.top > div {
+  display:flex;
+  flex-direction:column;
+  justify-content:center;
+}
+
+.brand {
+  font-size:clamp(24px,2.2vw,42px);
+  font-weight:900;
+  letter-spacing:.5px;
+  text-shadow:0 4px 15px #000;
+}
+
+.room {
+  margin-top:10px;
+  font-size:clamp(16px,1.15vw,23px);
+}
+
+/* ---------- PHASE + TIMER ---------- */
+
+.phaseBox {
+  position:relative;
+  overflow:hidden;
+
+  display:flex !important;
+  flex-direction:row !important;
+  align-items:center;
+  justify-content:center !important;
+  gap:28px;
+
+  padding:16px 26px;
+
+  border-radius:24px;
+  border:1px solid #405889;
+
+  background:
+    linear-gradient(
+      135deg,
+      rgba(35,55,99,.96),
+      rgba(16,27,52,.96)
+    );
+
+  box-shadow:
+    0 12px 35px rgba(0,0,0,.38),
+    inset 0 1px 0 rgba(255,255,255,.08);
+}
+
+#phase {
+  font-size:clamp(25px,2vw,39px);
+  font-weight:900;
+  white-space:nowrap;
+}
+
+#timer {
+  margin:0;
+  min-width:145px;
+
+  font-size:clamp(42px,3.4vw,67px);
+  line-height:1;
+  font-weight:900;
+
+  color:#ffd369;
+
+  font-variant-numeric:tabular-nums;
+  text-shadow:0 0 20px rgba(255,193,70,.25);
+}
+
+/* ---------- STATS ---------- */
+
+.stats {
+  padding:14px 20px;
+
+  border-radius:20px;
+  border:1px solid #30446d;
+
+  background:rgba(15,25,48,.92);
+
+  font-size:clamp(16px,1.15vw,23px);
+  line-height:1.8;
+
+  box-shadow:0 10px 30px rgba(0,0,0,.25);
+}
+
+/* ---------- MAIN GRID ---------- */
+
+.grid {
+  display:grid;
+  grid-template-columns:minmax(0,1.25fr) minmax(380px,.75fr);
+  gap:18px;
+}
+
+/* ---------- CARDS ---------- */
+
+.card {
+  border-radius:22px;
+  border:1px solid #30446d;
+
+  background:
+    linear-gradient(
+      180deg,
+      rgba(18,29,54,.97),
+      rgba(10,18,35,.97)
+    );
+
+  padding:20px;
+
+  box-shadow:
+    0 16px 45px rgba(0,0,0,.3),
+    inset 0 1px 0 rgba(255,255,255,.04);
+}
+
+.card h2 {
+  margin:0 0 16px;
+
+  font-size:clamp(20px,1.45vw,29px);
+  font-weight:900;
+}
+
+/* ---------- PLAYERS ---------- */
+
+#players {
+  display:grid;
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:11px;
+}
+
+.player {
+  min-height:66px;
+
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:14px;
+
+  padding:12px 16px;
+
+  border-radius:16px;
+  border:1px solid #33476f;
+
+  background:
+    linear-gradient(
+      135deg,
+      rgba(32,48,82,.95),
+      rgba(22,34,62,.95)
+    );
+
+  font-size:clamp(16px,1.1vw,22px);
+
+  box-shadow:0 5px 15px rgba(0,0,0,.18);
+}
+
+.player.dead {
+  opacity:.62;
+
+  border-color:#573440;
+
+  background:
+    linear-gradient(
+      135deg,
+      rgba(54,31,42,.92),
+      rgba(27,25,36,.92)
+    );
+}
+
+.aliveText {
+  color:#66ef9b;
+  white-space:nowrap;
+}
+
+.deadText {
+  color:#ff737e;
+  white-space:nowrap;
+}
+
+/* ---------- ROLE LIST ---------- */
+
+#roles {
+  display:grid;
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:11px;
+}
+
+.role {
+  min-height:62px;
+
+  display:flex;
+  align-items:center;
+  justify-content:center;
+
+  padding:12px 14px;
+
+  text-align:center;
+
+  border-radius:16px;
+  border:1px solid #405a8d;
+
+  background:
+    linear-gradient(
+      135deg,
+      #1c2d52,
+      #14213e
+    );
+
+  font-size:clamp(15px,1vw,20px);
+  font-weight:800;
+
+  box-shadow:0 5px 16px rgba(0,0,0,.2);
+}
+
+.roleNote {
+  margin-top:16px !important;
+
+  padding:12px 14px;
+
+  border-radius:12px;
+
+  background:rgba(83,105,155,.12);
+
+  font-size:clamp(13px,.85vw,17px) !important;
+  line-height:1.5;
+}
+
+/* ---------- TIMELINE ---------- */
+
+.timeline {
+  margin-top:18px;
+}
+
+#statusMessage {
+  padding:12px 15px;
+
+  border-radius:12px;
+
+  background:rgba(70,91,138,.12);
+
+  font-size:clamp(15px,1vw,20px);
+}
+
+#timelineList {
+  grid-template-columns:repeat(2,minmax(0,1fr));
+}
+
+/* ---------- JOIN DASHBOARD ---------- */
+
+#joinScreen {
+  background:
+    radial-gradient(circle at 50% 20%,#263967 0%,transparent 45%),
+    linear-gradient(180deg,#0b1328,#050912);
+}
+
+.joinBox {
+  width:min(650px,92vw);
+
+  padding:48px;
+
+  border-radius:30px;
+
+  background:
+    linear-gradient(
+      180deg,
+      rgba(21,34,64,.98),
+      rgba(10,18,35,.98)
+    );
+
+  border:1px solid #3c5383;
+
+  box-shadow:
+    0 30px 100px rgba(0,0,0,.6);
+}
+
+.wolf {
+  filter:drop-shadow(0 8px 20px rgba(0,0,0,.4));
+}
+
+#roomCode {
+  height:70px;
+
+  font-weight:900;
+  letter-spacing:10px;
+
+  border:2px solid #40598b;
+}
+
+#openBtn {
+  height:65px;
+
+  font-size:22px;
+
+  box-shadow:0 10px 30px rgba(93,72,255,.25);
+}
+
+/* ---------- FULL HD ---------- */
+
+@media (min-width:1500px) {
+
+  #dashboard {
+    max-width:1920px;
+    margin:auto;
+  }
+
+  .player {
+    min-height:72px;
+  }
+
+  .role {
+    min-height:68px;
+  }
+}
+
+/* ---------- SMALLER TV / TABLET ---------- */
+
+@media (max-width:1050px) {
+
+  #dashboard {
+    padding:15px;
+  }
+
+  .top {
+    grid-template-columns:1fr;
+  }
+
+  .stats {
+    text-align:center;
+  }
+
+  .grid {
+    grid-template-columns:1fr;
+  }
+
+  #timelineList {
+    grid-template-columns:1fr;
+  }
+}
+
+/* ---------- PHONE ---------- */
+
+@media (max-width:650px) {
+
+  #players,
+  #roles {
+    grid-template-columns:1fr;
+  }
+
+  .phaseBox {
+    flex-direction:column !important;
+    gap:8px;
+  }
+
+  .joinBox {
+    padding:30px 20px;
+  }
+}
+
+</style>
+
+
+<style id="DYNAMIC-THEME-V1">
+
+/* =========================================
+   ☀️ DAY
+   ========================================= */
+
+body.theme-day {
+  background:
+    radial-gradient(
+      circle at 50% -10%,
+      rgba(255,191,73,.22),
+      transparent 35%
+    ),
+    linear-gradient(
+      180deg,
+      #23395d 0%,
+      #142440 45%,
+      #09111f 100%
+    );
+}
+
+body.theme-day .phaseBox {
+  border-color:#c89a42;
+
+  background:
+    linear-gradient(
+      135deg,
+      rgba(117,81,28,.95),
+      rgba(49,43,39,.96)
+    );
+}
+
+body.theme-day #timer {
+  color:#ffd76a;
+}
+
+
+/* =========================================
+   🌙 NIGHT
+   ========================================= */
+
+body.theme-night {
+  background:
+    radial-gradient(
+      circle at 82% 8%,
+      rgba(108,143,255,.20),
+      transparent 20%
+    ),
+    radial-gradient(
+      circle at 50% -20%,
+      #1e3260,
+      transparent 45%
+    ),
+    linear-gradient(
+      180deg,
+      #080e21 0%,
+      #050914 65%,
+      #02040a 100%
+    );
+}
+
+body.theme-night .phaseBox {
+  border-color:#4967b0;
+
+  background:
+    linear-gradient(
+      135deg,
+      rgba(27,49,102,.97),
+      rgba(12,21,48,.98)
+    );
+}
+
+body.theme-night #timer {
+  color:#91b5ff;
+
+  text-shadow:
+    0 0 25px rgba(96,142,255,.35);
+}
+
+
+/* =========================================
+   💀 MEMORIAL
+   ========================================= */
+
+body.theme-memorial {
+  background:
+    radial-gradient(
+      circle at 50% 0%,
+      rgba(170,42,57,.20),
+      transparent 35%
+    ),
+    linear-gradient(
+      180deg,
+      #261017,
+      #10090e 60%,
+      #050507
+    );
+}
+
+body.theme-memorial .phaseBox {
+  border-color:#8e3948;
+
+  background:
+    linear-gradient(
+      135deg,
+      rgba(91,30,43,.97),
+      rgba(31,16,25,.98)
+    );
+}
+
+body.theme-memorial #timer {
+  color:#ff7c89;
+}
+
+
+/* =========================================
+   🏹 HUNTER
+   ========================================= */
+
+body.theme-hunter {
+  background:
+    radial-gradient(
+      circle at 50% 0%,
+      rgba(211,152,57,.20),
+      transparent 35%
+    ),
+    linear-gradient(
+      180deg,
+      #271d11,
+      #11100d 60%,
+      #060606
+    );
+}
+
+body.theme-hunter .phaseBox {
+  border-color:#a77a36;
+
+  background:
+    linear-gradient(
+      135deg,
+      rgba(95,65,25,.97),
+      rgba(35,28,18,.98)
+    );
+}
+
+body.theme-hunter #timer {
+  color:#ffd27c;
+}
+
+
+/* =========================================
+   🏆 GAME OVER
+   ========================================= */
+
+body.theme-gameover {
+  background:
+    radial-gradient(
+      circle at 50% 0%,
+      rgba(119,87,255,.24),
+      transparent 38%
+    ),
+    linear-gradient(
+      180deg,
+      #17132f,
+      #0c0a18 60%,
+      #050509
+    );
+}
+
+body.theme-gameover .phaseBox {
+  border-color:#765fff;
+
+  background:
+    linear-gradient(
+      135deg,
+      rgba(71,51,154,.96),
+      rgba(28,22,67,.98)
+    );
+}
+
+
+/* Smooth transition */
+
+body,
+.phaseBox,
+.card,
+.stats {
+  transition:
+    background .8s ease,
+    border-color .8s ease,
+    color .5s ease;
+}
+
+</style>
+
+
+<style id="ROUND-DISPLAY-V1">
+
+#phase {
+  text-transform:uppercase;
+  letter-spacing:1px;
+}
+
+.phaseRound {
+  display:inline-block;
+  margin-left:8px;
+  font-weight:900;
+}
+
+@media (min-width:1200px) {
+  #phase {
+    min-width:220px;
+    text-align:center;
+  }
+}
+
+</style>
+
+
+<style id="TV-HEADER-V3">
+
+/* ==============================
+   TV HEADER V3
+   ============================== */
+
+.top {
+  display:grid !important;
+  grid-template-columns:1fr 1.15fr 1fr !important;
+  align-items:center !important;
+  gap:1.2vw !important;
+
+  padding:1vw 1.3vw !important;
+  margin-bottom:1.3vw !important;
+
+  background:rgba(7,12,27,.72);
+  border:1px solid rgba(132,154,205,.20);
+  border-radius:18px;
+
+  box-shadow:
+    0 12px 35px rgba(0,0,0,.25);
+}
+
+
+/* ---------- LEFT ---------- */
+
+.top > div:first-child {
+  min-width:0;
+}
+
+.brand {
+  font-size:1.55vw !important;
+  font-weight:900 !important;
+  letter-spacing:.06em;
+  white-space:nowrap;
+}
+
+.room {
+  margin-top:.35vw !important;
+  font-size:.95vw !important;
+  color:#9fb0d0 !important;
+}
+
+#roomLabel {
+  color:#ffffff;
+  font-size:1.15vw;
+  letter-spacing:.12em;
+}
+
+
+/* ---------- CENTER ---------- */
+
+.phaseBox {
+  padding:.8vw 1vw !important;
+  min-height:5.3vw;
+
+  display:flex;
+  flex-direction:column;
+  justify-content:center;
+  align-items:center;
+
+  border-radius:16px !important;
+}
+
+#phase {
+  font-size:1.35vw !important;
+  font-weight:900 !important;
+  letter-spacing:.06em;
+  line-height:1.15;
+}
+
+#timer {
+  font-size:2.35vw !important;
+  font-weight:900 !important;
+  line-height:1;
+  margin-top:.35vw !important;
+  font-variant-numeric:tabular-nums;
+}
+
+
+/* ---------- RIGHT STATS ---------- */
+
+.stats {
+  display:grid !important;
+  grid-template-columns:repeat(3,1fr);
+  gap:.45vw;
+
+  text-align:center !important;
+  line-height:1.15 !important;
+  font-size:0 !important;
+}
+
+.stats br {
+  display:none;
+}
+
+.stats > b {
+  display:block;
+}
+
+
+/*
+  HTML เดิมเป็นข้อความ + <b>
+  จึงใช้ CSS จัดตัวเลขให้เด่น
+*/
+
+#total,
+#alive,
+#dead {
+  display:inline-block !important;
+
+  min-width:3.8vw;
+  padding:.7vw .45vw;
+
+  font-size:1.65vw !important;
+  font-weight:900;
+
+  border-radius:12px;
+  background:rgba(255,255,255,.055);
+  border:1px solid rgba(255,255,255,.09);
+}
+
+#total {
+  color:#75a7ff;
+}
+
+#alive {
+  color:#63e69c;
+}
+
+#dead {
+  color:#ff7777;
+}
+
+
+/* Labels ด้านบนตัวเลข */
+
+#total::before {
+  content:"👥 ทั้งหมด";
+}
+
+#alive::before {
+  content:"💚 มีชีวิต";
+}
+
+#dead::before {
+  content:"💀 เสียชีวิต";
+}
+
+#total::before,
+#alive::before,
+#dead::before {
+  display:block;
+
+  margin-bottom:.3vw;
+
+  font-size:.72vw;
+  font-weight:700;
+  color:#aab7d2;
+
+  white-space:nowrap;
+}
+
+
+/* ==============================
+   TV 4K / LARGE SCREEN
+   ============================== */
+
+@media (min-width:1900px) {
+
+  .top {
+    border-radius:24px;
+  }
+
+  .phaseBox {
+    border-radius:20px !important;
+  }
+
+}
+
+
+/* ==============================
+   TABLET
+   ============================== */
+
+@media (max-width:1000px) {
+
+  .top {
+    grid-template-columns:1fr !important;
+    gap:12px !important;
+    padding:16px !important;
+  }
+
+  .brand {
+    font-size:25px !important;
+    text-align:center;
+  }
+
+  .room {
+    font-size:15px !important;
+    text-align:center;
+  }
+
+  #roomLabel {
+    font-size:17px;
+  }
+
+  #phase {
+    font-size:21px !important;
+  }
+
+  #timer {
+    font-size:40px !important;
+  }
+
+  .stats {
+    gap:8px;
+  }
+
+  #total,
+  #alive,
+  #dead {
+    font-size:24px !important;
+    min-width:0;
+    padding:12px 5px;
+  }
+
+  #total::before,
+  #alive::before,
+  #dead::before {
+    font-size:12px;
+  }
+
+}
+
+
+/* ==============================
+   PHONE
+   ============================== */
+
+@media (max-width:650px) {
+
+  .stats {
+    grid-template-columns:repeat(3,1fr) !important;
+  }
+
+  #total,
+  #alive,
+  #dead {
+    font-size:21px !important;
+  }
+
+}
+
+</style>
+
+</head>
+
+<body>
+
+<section id="joinScreen">
+  <div class="joinBox">
+    <div class="wolf">🐺</div>
+    <h1>GAME DASHBOARD</h1>
+    <div class="subtitle">Werewolf Online • TV Mode</div>
+
+    <input
+      id="roomCode"
+      maxlength="10"
+      placeholder="ROOM CODE"
+      autocomplete="off"
+    >
+
+    <button id="openBtn">
+      📺 เปิด Dashboard
+    </button>
+
+    <div id="joinError"></div>
+  </div>
+</section>
+
+
+<main id="dashboard">
+
+  <div class="top">
+
+    <div>
+      <div class="brand">🐺 WEREWOLF ONLINE</div>
+      <div class="room">
+        ROOM : <b id="roomLabel">----</b>
+      </div>
+    </div>
+
+    <div class="phaseBox">
+      <div id="phase">⏳ รอเริ่มเกม</div>
+      <div id="timer">--:--</div>
+    </div>
+
+    <div class="stats">
+      👥 ผู้เล่น <b id="total">0</b> คน<br>
+      ❤️ มีชีวิต <b id="alive">0</b>
+      &nbsp;&nbsp;
+      💀 เสียชีวิต <b id="dead">0</b>
+    </div>
+
+  </div>
+
+
+  <div class="grid">
+
+    <section class="card">
+      <h2>👥 สถานะผู้เล่น</h2>
+      <div id="players"></div>
+    </section>
+
+
+    <section class="card">
+      <h2>🎭 ROLE ที่มีในเกมรอบนี้</h2>
+
+      <div id="roles"></div>
+
+      <div class="roleNote">
+        🔒 ไม่แสดงจำนวน Role และไม่เปิดเผยว่าใครได้รับ Role ใด
+      </div>
+    </section>
+
+  </div>
+
+
+  <section class="card timeline">
+    <h2>📜 สถานะเกม</h2>
+    <div id="statusMessage">
+      กำลังรอข้อมูลจากเกม...
+    </div>
+
+    <div id="timelineList"
+         style="
+           margin-top:14px;
+           display:grid;
+           gap:8px;
+         ">
+    </div>
+  </section>
+
+</main>
+
+
+<script>
+const socket = io();
+
+const joinScreen = document.getElementById("joinScreen");
+const dashboard = document.getElementById("dashboard");
+const roomInput = document.getElementById("roomCode");
+const joinError = document.getElementById("joinError");
+
+let currentState = null;
+let currentRoom = "";
+let timerLoop = null;
+
+
+function joinDashboard(){
+
+  const code = roomInput.value.trim().toUpperCase();
+
+  if(!code){
+    joinError.textContent = "กรุณาใส่รหัสห้อง";
+    return;
+  }
+
+  socket.emit("joinDashboard",{code},res=>{
+
+    if(!res || !res.ok){
+      joinError.textContent =
+        (res && res.error) || "ไม่สามารถเข้าห้องได้";
+      return;
+    }
+
+    currentRoom = res.code;
+
+    document.getElementById("roomLabel").textContent =
+      currentRoom;
+
+    joinScreen.style.display="none";
+    dashboard.style.display="block";
+
+    startTimer();
+  });
+}
+
+
+document.getElementById("openBtn").onclick =
+  joinDashboard;
+
+
+roomInput.addEventListener("keydown",e=>{
+  if(e.key==="Enter") joinDashboard();
+});
+
+
+socket.on("dashboardState",state=>{
+
+  currentState=state;
+
+  renderDashboard(state);
+});
+
+
+function renderDashboard(s){
+
+  const players = s.players || [];
+
+  const alive =
+    players.filter(p=>p.alive).length;
+
+  document.getElementById("total").textContent =
+    players.length;
+
+  document.getElementById("alive").textContent =
+    alive;
+
+  document.getElementById("dead").textContent =
+    players.length-alive;
+
+
+  // PLAYER LIST
+  const playerBox =
+    document.getElementById("players");
+
+  playerBox.innerHTML="";
+
+  players.forEach(p=>{
+
+    const div=document.createElement("div");
+
+    div.className =
+      "player "+(p.alive ? "" : "dead");
+
+    div.innerHTML=`
+      <span>👤 ${escapeHtml(p.name)}</span>
+      <b class="${p.alive ? "aliveText":"deadText"}">
+        ${p.alive ? "❤️ มีชีวิต":"💀 เสียชีวิต"}
+      </b>
+    `;
+
+    playerBox.appendChild(div);
+  });
+
+
+  // ROLE LIST
+  const roleBox =
+    document.getElementById("roles");
+
+  roleBox.innerHTML="";
+
+  (s.roles || []).forEach(r=>{
+
+    const div=document.createElement("div");
+
+    div.className="role";
+
+    div.textContent =
+      `${r.emoji || "🎭"} ${r.name}`;
+
+    roleBox.appendChild(div);
+  });
+
+
+  renderPhase(s);
+  renderTimeline(s);
+}
+
+
+
+function applyGameTheme(s){
+
+  const body = document.body;
+
+  body.classList.remove(
+    "theme-day",
+    "theme-night",
+    "theme-memorial",
+    "theme-hunter",
+    "theme-gameover"
+  );
+
+  const phase =
+    String(s.phase || "").toLowerCase();
+
+  if(
+    phase === "gameover" ||
+    phase === "ended"
+  ){
+    body.classList.add("theme-gameover");
+
+  }else if(phase === "memorial"){
+
+    body.classList.add("theme-memorial");
+
+  }else if(phase === "hunter"){
+
+    body.classList.add("theme-hunter");
+
+  }else if(phase === "night"){
+
+    body.classList.add("theme-night");
+
+  }else{
+
+    body.classList.add("theme-day");
+  }
+}
+
+
+function renderPhase(s){
+
+  applyGameTheme(s);
+
+  const phase =
+    String(s.phase || "").toLowerCase();
+
+  let text="⏳ รอเริ่มเกม";
+
+
+  if(phase==="night")
+    text=`🌙 NIGHT ${s.night || 1}`;
+
+  else if(phase==="day")
+    text=`☀️ DAY ${s.night || 1}`;
+
+  else if(phase==="memorial")
+    text=`💀 MEMORIAL • ${s.night || 1}`;
+
+  else if(phase==="hunter")
+    text=`🏹 HUNTER • ${s.night || 1}`;
+
+  else if(
+    phase==="gameover" ||
+    phase==="ended"
+  )
+    text="🏆 จบเกม";
+
+
+  document.getElementById("phase").textContent =
+    text;
+
+
+  let status="";
+
+
+  if(!s.started){
+
+    status="⏳ กำลังรอ HOST เริ่มเกม";
+
+  }else if(phase==="night"){
+
+    status=
+      `🌙 NIGHT ${s.night || ""} • `+
+      `ผู้เล่นกำลังใช้ความสามารถในช่วงกลางคืน`;
+
+  }else if(phase==="day"){
+
+    status=
+      "☀️ DAY • สนทนา วิเคราะห์ และลงคะแนนได้";
+
+  }else if(phase==="hunter"){
+
+    status=
+      "🏹 กำลังรอการตัดสินใจของนายพราน";
+
+  }else if(
+    phase==="gameover" ||
+    phase==="ended"
+  ){
+
+    status=
+      "🏆 เกมจบแล้ว"+
+      (s.winner ? ` • ${s.winner}` : "");
+
+  }else{
+
+    status="🎮 เกมกำลังดำเนินการ";
+
+  }
+
+
+  document.getElementById("statusMessage").textContent =
+    status;
+}
+
+
+
+function renderTimeline(s){
+
+  const box = document.getElementById("timelineList");
+  if(!box) return;
+
+  const timeline = s.timeline || [];
+
+  box.innerHTML = "";
+
+  if(timeline.length === 0){
+
+    const empty = document.createElement("div");
+
+    empty.style.color = "#7f8ca8";
+    empty.style.padding = "12px";
+
+    empty.textContent =
+      "ยังไม่มีผู้เสียชีวิตในเกม";
+
+    box.appendChild(empty);
+
+    return;
+  }
+
+
+  timeline.slice(-8).forEach(item => {
+
+    const row = document.createElement("div");
+
+    row.style.cssText = `
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:20px;
+      padding:12px 16px;
+      border-radius:12px;
+      background:#17233e;
+      border:1px solid #2b3c61;
+    `;
+
+
+    let icon = "💀";
+    let label = "เสียชีวิต";
+
+
+    if(item.reason === "Vote"){
+
+      icon = "☀️";
+      label = "ถูกโหวตออก";
+
+    }else if(item.reason === "Night"){
+
+      icon = "🌙";
+      label = "เสียชีวิตตอนกลางคืน";
+
+    }else if(item.reason === "Hunter"){
+
+      icon = "🏹";
+      label = "ถูกนายพรานยิง";
+
+    }else if(item.reason === "Lover"){
+
+      icon = "💘";
+      label = "เสียชีวิตตามคู่รัก";
+
+    }
+
+
+    let roundText = "";
+
+    if(item.reason === "Night"){
+
+      roundText =
+        `Night ${item.night || ""}`;
+
+    }else if(item.reason === "Vote"){
+
+      roundText =
+        `Day ${item.night || ""}`;
+
+    }else{
+
+      roundText =
+        item.phase === "night"
+          ? `Night ${item.night || ""}`
+          : `Day ${item.night || ""}`;
+    }
+
+
+    row.innerHTML = `
+      <div style="
+        display:flex;
+        align-items:center;
+        gap:14px;
+      ">
+        <span style="font-size:24px">
+          ${icon}
+        </span>
+
+        <div>
+          <b style="font-size:18px">
+            ${escapeHtml(item.name)}
+          </b>
+
+          <div style="
+            color:#9da9c7;
+            margin-top:3px;
+          ">
+            ${label}
+          </div>
+        </div>
+      </div>
+
+      <b style="
+        color:#8eabff;
+        white-space:nowrap;
+      ">
+        ${roundText}
+      </b>
+    `;
+
+    box.appendChild(row);
+  });
+}
+
+
+function startTimer(){
+
+  clearInterval(timerLoop);
+
+  timerLoop=setInterval(()=>{
+
+    if(!currentState) return;
+
+    const phase =
+      String(currentState.phase || "")
+      .toLowerCase();
+
+    let end=null;
+
+    if(phase==="night")
+      end=currentState.nightEndsAt;
+
+    else if(phase==="day")
+      end=currentState.dayEndsAt;
+
+    else if(phase==="hunter")
+      end=currentState.hunterEndsAt;
+
+
+    if(!end){
+
+      document.getElementById("timer")
+        .textContent="--:--";
+
+      return;
+    }
+
+
+    const remain =
+      Math.max(
+        0,
+        Math.ceil((end-Date.now())/1000)
+      );
+
+
+    const m =
+      String(Math.floor(remain/60))
+      .padStart(2,"0");
+
+    const sec =
+      String(remain%60)
+      .padStart(2,"0");
+
+
+    document.getElementById("timer")
+      .textContent=`${m}:${sec}`;
+
+  },250);
+}
+
+
+function escapeHtml(v){
+
+  return String(v)
+    .replaceAll("&","&amp;")
+    .replaceAll("<","&lt;")
+    .replaceAll(">","&gt;")
+    .replaceAll('"',"&quot;")
+    .replaceAll("'","&#039;");
+}
+</script>
+
+</body>
+</html>
